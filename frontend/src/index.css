@@ -1,0 +1,268 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   TextLens AI — Design System
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+/* ── CSS Variables ──────────────────────────────────────────────────────── */
+:root {
+  /* Palette */
+  --color-bg:            #0b0d14;
+  --color-bg-card:       #12141f;
+  --color-bg-card-hover: #181b28;
+  --color-bg-sidebar:    #0e1019;
+  --color-bg-input:      #161927;
+  --color-border:        #1e2235;
+  --color-border-focus:  #4f6ef7;
+
+  --color-text:          #e4e6f0;
+  --color-text-muted:    #8b90a8;
+  --color-text-dim:      #5a5f78;
+
+  /* Accent */
+  --color-accent:        #4f6ef7;
+  --color-accent-hover:  #6580ff;
+  --color-accent-glow:   rgba(79, 110, 247, 0.15);
+
+  /* Semantic */
+  --color-success:       #34d399;
+  --color-success-bg:    rgba(52, 211, 153, 0.10);
+  --color-warning:       #fbbf24;
+  --color-warning-bg:    rgba(251, 191, 36, 0.10);
+  --color-error:         #f87171;
+  --color-error-bg:      rgba(248, 113, 113, 0.10);
+  --color-info:          #60a5fa;
+  --color-info-bg:       rgba(96, 165, 250, 0.10);
+
+  /* Gradients */
+  --gradient-brand:      linear-gradient(135deg, #4f6ef7 0%, #a855f7 100%);
+  --gradient-card:       linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
+  --gradient-glow:       radial-gradient(600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(79,110,247,0.06), transparent 40%);
+
+  /* Typography */
+  --font-sans:           'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:           'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Spacing */
+  --space-xs:   0.25rem;
+  --space-sm:   0.5rem;
+  --space-md:   1rem;
+  --space-lg:   1.5rem;
+  --space-xl:   2rem;
+  --space-2xl:  3rem;
+
+  /* Radii */
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  16px;
+  --radius-xl:  20px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm:   0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md:   0 4px 12px rgba(0,0,0,0.3);
+  --shadow-lg:   0 8px 32px rgba(0,0,0,0.4);
+  --shadow-glow: 0 0 30px rgba(79,110,247,0.15);
+
+  /* Sidebar */
+  --sidebar-width:  260px;
+  --header-height:  64px;
+
+  /* Transitions */
+  --transition-fast:  150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base:  250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow:  400ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+
+/* ── Reset ──────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.6;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  font-family: var(--font-sans);
+}
+
+input, textarea, select {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+}
+
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-dim);
+}
+
+
+/* ── Utility classes ────────────────────────────────────────────────────── */
+
+.card {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  min-width: 0;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+}
+
+.card:hover {
+  border-color: rgba(79, 110, 247, 0.2);
+  box-shadow: var(--shadow-glow);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.625rem 1.25rem;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  font-size: 0.875rem;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: var(--gradient-brand);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(79, 110, 247, 0.3);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(79, 110, 247, 0.4);
+}
+
+.btn-secondary {
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-glow);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.btn-ghost:hover {
+  color: var(--color-text);
+  background: rgba(255,255,255,0.04);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.badge-success {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+}
+
+.badge-warning {
+  color: var(--color-warning);
+  background: var(--color-warning-bg);
+}
+
+.badge-error {
+  color: var(--color-error);
+  background: var(--color-error-bg);
+}
+
+.badge-info {
+  color: var(--color-info);
+  background: var(--color-info-bg);
+}
+
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fadeIn   { animation: fadeIn   0.4s ease-out forwards; }
+.animate-fadeInUp { animation: fadeInUp 0.5s ease-out forwards; }
+.animate-pulse    { animation: pulse    2s ease-in-out infinite; }
+.animate-spin     { animation: spin     1s linear infinite; }
+
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.10s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.20s; }
+.stagger-5 { animation-delay: 0.25s; }

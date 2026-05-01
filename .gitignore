@@ -1,0 +1,31 @@
+# ── Environment ──
+.env
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+.pytest_cache/
+pytest-cache-files-*/
+test-tmp/
+*.log
+
+# ── Uploads & Output ──
+uploads/
+output/
+
+# ── Node / React ──
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+
+implementation_plan.md
+TextLens_AI_PRD.md
