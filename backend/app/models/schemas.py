@@ -91,6 +91,7 @@ class DatasetMeta(BaseModel):
     file_path: str = ""          # path to the uploaded file
     clean_csv_path: str = ""     # path to the cleaned file
     report_json_path: str = ""   # path to the persisted ingestion report
+    analysis_path: str = ""      # path to the analysis results JSON
     error: Optional[str] = None
 
 

@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import ingestion
+from app.routers import ingestion, analysis
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
@@ -34,6 +34,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 
 app.include_router(ingestion.router)
+app.include_router(analysis.router)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
