@@ -10,7 +10,7 @@ const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 
 const api = axios.create({
   baseURL: API_BASE,
-  timeout: 120_000,   // 2 min — uploads can be large
+  timeout: 300_000,   // 5 min — analysis on large datasets can be slow
 });
 
 // ── Ingestion ────────────────────────────────────────────────────────────────
@@ -63,6 +63,29 @@ export async function getDatasetPreview(datasetId, limit = 50) {
  */
 export async function checkHealth() {
   const res = await api.get('/health');
+  return res.data;
+}
+
+
+// ── Analysis ─────────────────────────────────────────────────────────────────
+
+/**
+ * Run the full analysis pipeline on a dataset.
+ * @param {string} datasetId
+ * @returns {Promise<object>} Full analysis response (schema, insights, charts)
+ */
+export async function analyzeDataset(datasetId) {
+  const res = await api.post(`/datasets/${datasetId}/analyze`);
+  return res.data;
+}
+
+/**
+ * Get previously saved analysis results.
+ * @param {string} datasetId
+ * @returns {Promise<object>} Saved analysis response
+ */
+export async function getAnalysis(datasetId) {
+  const res = await api.get(`/datasets/${datasetId}/analysis`);
   return res.data;
 }
 

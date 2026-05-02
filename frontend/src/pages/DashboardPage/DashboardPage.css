@@ -1,0 +1,232 @@
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-lg);
+}
+
+.dashboard-header h1 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-xs);
+  color: var(--color-text);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.dashboard-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.dashboard-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-md);
+  padding: var(--space-lg) !important;
+}
+
+.dataset-picker {
+  display: grid;
+  gap: var(--space-xs);
+  flex: 1;
+}
+
+.dataset-picker > span {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dataset-select-wrap {
+  position: relative;
+}
+
+.dataset-select-wrap select {
+  width: 100%;
+  min-height: 42px;
+  appearance: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  padding: 0 var(--space-xl) 0 var(--space-md);
+}
+
+.dataset-select-wrap svg {
+  position: absolute;
+  top: 50%;
+  right: var(--space-sm);
+  color: var(--color-text-dim);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.dashboard-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg) !important;
+}
+
+.dashboard-message--error {
+  border-color: rgba(248, 113, 113, 0.28) !important;
+  background: var(--color-error-bg) !important;
+  color: var(--color-error);
+}
+
+.dashboard-loading,
+.dashboard-empty {
+  display: grid;
+  place-items: center;
+  gap: var(--space-md);
+  min-height: 280px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.dashboard-loading svg,
+.dashboard-empty svg {
+  color: var(--color-accent);
+}
+
+.dashboard-empty {
+  padding: var(--space-2xl) !important;
+}
+
+.dashboard-empty h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1.15rem;
+}
+
+.dashboard-empty p {
+  max-width: 420px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.stat-tile {
+  display: grid;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-md) var(--space-lg) !important;
+}
+
+.stat-tile span {
+  color: var(--color-text-dim);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stat-tile strong {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: var(--space-lg);
+}
+
+.chart-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 360px;
+  padding: var(--space-lg) !important;
+}
+
+.chart-card-header {
+  display: grid;
+  gap: 2px;
+  margin-bottom: var(--space-md);
+}
+
+.chart-card-header h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.chart-card-header p {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+}
+
+.chart-frame {
+  flex: 1;
+  min-height: 292px;
+}
+
+.chart-placeholder {
+  display: grid;
+  flex: 1;
+  min-height: 292px;
+  place-items: center;
+  color: var(--color-text-dim);
+  font-size: 0.9rem;
+}
+
+.chart-legend-label {
+  color: var(--color-text);
+  font-size: 0.82rem;
+}
+
+.recharts-default-tooltip {
+  background: #1a1d2e !important;
+  border: 1px solid #2a2d3e !important;
+  border-radius: 8px !important;
+}
+
+.recharts-tooltip-label {
+  color: #e4e6f0 !important;
+  font-weight: 700 !important;
+}
+
+@media (max-width: 900px) {
+  .dashboard-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .dashboard-stats,
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
