@@ -4,13 +4,20 @@ import {
   BarChart3,
   ChevronDown,
   Database,
+  FileText,
   LayoutDashboard,
   Loader2,
+  MessageSquareText,
   PieChart,
   Play,
   RefreshCw,
+  Sparkles,
+  ThumbsUp,
+  TrendingUp,
 } from 'lucide-react';
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -21,6 +28,8 @@ import {
   Pie,
   PieChart as RechartsPieChart,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -39,7 +48,14 @@ const CHART_COLORS = [
   '#f472b6',
 ];
 
-const SUPPORTED_CHARTS = new Set(['bar', 'pie', 'donut', 'line', 'histogram']);
+const SUPPORTED_CHARTS = new Set(['bar', 'horizontal_bar', 'pie', 'donut', 'line', 'area', 'histogram', 'scatter']);
+
+const DASHBOARD_SECTIONS = [
+  { id: 'key', title: 'Key Insights', icon: Sparkles },
+  { id: 'content', title: 'Content Insights', icon: MessageSquareText },
+  { id: 'engagement', title: 'Engagement Insights', icon: ThumbsUp },
+  { id: 'time', title: 'Time Insights', icon: TrendingUp },
+];
 
 export default function DashboardPage() {
   const [datasets, setDatasets] = useState([]);
@@ -102,10 +118,18 @@ export default function DashboardPage() {
     [datasets, selectedId],
   );
 
-  const charts = useMemo(
-    () => (analysis?.charts || []).filter((chart) => SUPPORTED_CHARTS.has(chart.type)),
-    [analysis],
-  );
+  const charts = useMemo(() => (analysis?.charts || []).filter((chart) => SUPPORTED_CHARTS.has(chart.type)), [analysis]);
+
+  const chartsBySection = useMemo(() => {
+    const grouped = { key: [], content: [], engagement: [], time: [], other: [] };
+    charts.forEach((chart) => {
+      const section = grouped[chart.section] ? chart.section : 'other';
+      grouped[section].push(chart);
+    });
+    return grouped;
+  }, [charts]);
+
+  const keyInsights = analysis?.insights?.dataset?.key_insights || [];
 
   const runAnalysis = useCallback(async () => {
     if (!selectedId) return;
@@ -191,19 +215,50 @@ export default function DashboardPage() {
 
       {analysis && !analyzing && (
         <>
-          <StatsStrip analysis={analysis} chartCount={charts.length} />
+          <DashboardSection title="Overview" icon={BarChart3}>
+            <StatsStrip analysis={analysis} chartCount={charts.length} />
+          </DashboardSection>
 
-          {charts.length > 0 ? (
-            <section className="charts-grid" aria-label="Generated charts">
-              {charts.map((chart, index) => (
-                <ChartCard chart={chart} key={chart.id || `${chart.type}-${index}`} />
-              ))}
-            </section>
-          ) : (
+          {(keyInsights.length > 0 || chartsBySection.key.length > 0) && (
+            <DashboardSection title="Key Insights" icon={Sparkles}>
+              <KeyInsights insights={keyInsights} />
+              {chartsBySection.key.length > 0 && (
+                <div className="charts-grid charts-grid--featured">
+                  {chartsBySection.key.map((chart, index) => (
+                    <ChartCard chart={chart} key={chart.id || `${chart.type}-${index}`} />
+                  ))}
+                </div>
+              )}
+            </DashboardSection>
+          )}
+
+          {DASHBOARD_SECTIONS.filter((section) => section.id !== 'key').map(({ id, title, icon }) => (
+            chartsBySection[id].length > 0 && (
+              <DashboardSection title={title} icon={icon} key={id}>
+                <div className="charts-grid">
+                  {chartsBySection[id].map((chart, index) => (
+                    <ChartCard chart={chart} key={chart.id || `${chart.type}-${index}`} />
+                  ))}
+                </div>
+              </DashboardSection>
+            )
+          ))}
+
+          {chartsBySection.other.length > 0 && (
+            <DashboardSection title="Additional Signals" icon={FileText}>
+              <div className="charts-grid">
+                {chartsBySection.other.map((chart, index) => (
+                  <ChartCard chart={chart} key={chart.id || `${chart.type}-${index}`} />
+                ))}
+              </div>
+            </DashboardSection>
+          )}
+
+          {charts.length === 0 && (
             <div className="dashboard-empty card">
               <PieChart size={28} />
               <h2>No supported charts</h2>
-              <p>The current analysis did not return bar, pie, line, or histogram configs.</p>
+              <p>The current analysis did not return enough dataset-level signals for charting.</p>
             </div>
           )}
         </>
@@ -212,29 +267,60 @@ export default function DashboardPage() {
   );
 }
 
-function StatsStrip({ analysis, chartCount }) {
-  const stats = analysis.stats || {};
-  const schemaSummary = analysis.schema?.summary || {};
-  const schemaText = Object.entries(schemaSummary)
-    .filter(([, columns]) => columns.length > 0)
-    .map(([type, columns]) => `${columns.length} ${type}`)
-    .join(', ');
-
+function DashboardSection({ title, icon: Icon, children }) {
   return (
-    <section className="dashboard-stats">
-      <StatTile label="Rows" value={(stats.total_rows_original || 0).toLocaleString()} />
-      <StatTile label="Analyzed" value={(stats.total_rows_analyzed || 0).toLocaleString()} />
-      <StatTile label="Charts" value={chartCount.toLocaleString()} />
-      <StatTile label="Schema" value={schemaText || 'N/A'} />
+    <section className="dashboard-section">
+      <div className="section-heading">
+        <span className="section-heading-icon">
+          <Icon size={17} />
+        </span>
+        <h2>{title}</h2>
+      </div>
+      {children}
     </section>
   );
 }
 
-function StatTile({ label, value }) {
+function StatsStrip({ analysis, chartCount }) {
+  const stats = analysis.stats || {};
+  const schemaSummary = analysis.schema?.summary || {};
+  const roles = analysis.column_roles || analysis.insights?.summary?.column_roles || {};
+  const primaryText = roles.primary_text || schemaSummary.text?.[0];
+
+  return (
+    <section className="dashboard-stats">
+      <StatTile label="Rows" value={(stats.total_rows_original || 0).toLocaleString()} hint="Uploaded records" />
+      <StatTile label="Analyzed" value={(stats.total_rows_analyzed || 0).toLocaleString()} hint={stats.sampled ? 'Sampled for speed' : 'Full dataset'} />
+      <StatTile label="Insights" value={chartCount.toLocaleString()} hint="Curated visuals" />
+      <StatTile label="Primary Text" value={formatColumn(primaryText) || 'N/A'} hint="Used for sentiment" />
+    </section>
+  );
+}
+
+function StatTile({ label, value, hint }) {
   return (
     <div className="stat-tile card">
       <span>{label}</span>
       <strong>{value}</strong>
+      {hint && <em>{hint}</em>}
+    </div>
+  );
+}
+
+function KeyInsights({ insights }) {
+  if (insights.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="key-insights">
+      {insights.map((insight) => (
+        <article className="insight-card card" key={`${insight.label}-${insight.value}`}>
+          <span>{insight.label}</span>
+          <strong>{insight.value}</strong>
+          {insight.detail && <p>{insight.detail}</p>}
+        </article>
+      ))}
     </div>
   );
 }
@@ -261,10 +347,16 @@ function DynamicChart({ chart }) {
   switch (chart.type) {
     case 'bar':
       return <BarChartView chart={chart} data={data} />;
+    case 'horizontal_bar':
+      return <HorizontalBarChartView chart={chart} data={data} />;
     case 'histogram':
       return <HistogramView chart={chart} data={data} />;
     case 'line':
       return <LineChartView chart={chart} data={data} />;
+    case 'area':
+      return <AreaChartView chart={chart} data={data} />;
+    case 'scatter':
+      return <ScatterChartView chart={chart} data={normalizeScatterData(chart)} />;
     case 'pie':
     case 'donut':
       return <PieChartView chart={chart} data={data} />;
@@ -286,6 +378,21 @@ function BarChartView({ chart, data }) {
             <Cell key={entry.label} fill={entry.color || chart.colors?.[index] || CHART_COLORS[index % CHART_COLORS.length]} />
           ))}
         </Bar>
+      </BarChart>
+    </ChartFrame>
+  );
+}
+
+function HorizontalBarChartView({ chart, data }) {
+  const visibleData = data.slice(0, 12);
+  return (
+    <ChartFrame>
+      <BarChart data={visibleData} layout="vertical" margin={{ top: 8, right: 18, bottom: 8, left: 8 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" horizontal={false} />
+        <XAxis type="number" tick={axisTick} />
+        <YAxis type="category" dataKey="label" width={128} tick={compactAxisTick} />
+        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(79,110,247,0.08)' }} />
+        <Bar dataKey="value" fill={chart.color || '#4f6ef7'} radius={[0, 5, 5, 0]} />
       </BarChart>
     </ChartFrame>
   );
@@ -322,6 +429,41 @@ function LineChartView({ chart, data }) {
           activeDot={{ r: 5 }}
         />
       </LineChart>
+    </ChartFrame>
+  );
+}
+
+function AreaChartView({ chart, data }) {
+  return (
+    <ChartFrame>
+      <AreaChart data={data} margin={{ top: 8, right: 18, bottom: 36, left: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+        <XAxis dataKey="label" angle={-30} textAnchor="end" height={58} tick={axisTick} />
+        <YAxis tick={axisTick} />
+        <Tooltip contentStyle={tooltipStyle} />
+        <Area
+          type="monotone"
+          dataKey="value"
+          stroke={chart.color || '#38bdf8'}
+          fill={chart.color || '#38bdf8'}
+          fillOpacity={0.18}
+          strokeWidth={2.4}
+        />
+      </AreaChart>
+    </ChartFrame>
+  );
+}
+
+function ScatterChartView({ chart, data }) {
+  return (
+    <ChartFrame>
+      <ScatterChart margin={{ top: 8, right: 18, bottom: 32, left: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+        <XAxis type="number" dataKey="x" name={chart.x_label || 'Engagement'} tick={axisTick} />
+        <YAxis type="number" dataKey="y" name={chart.y_label || 'Sentiment'} tick={axisTick} domain={[-1, 1]} />
+        <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }} />
+        <Scatter data={data} fill={chart.color || '#f472b6'} />
+      </ScatterChart>
     </ChartFrame>
   );
 }
@@ -365,6 +507,15 @@ function ChartFrame({ children }) {
   );
 }
 
+function normalizeScatterData(chart) {
+  return (chart.data || [])
+    .map((item, index) => ({
+      x: Number(item.x ?? chart.x?.[index]),
+      y: Number(item.y ?? chart.y?.[index]),
+    }))
+    .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
+}
+
 function normalizeChartData(chart) {
   if (Array.isArray(chart.data) && chart.data.length > 0) {
     return chart.data
@@ -388,8 +539,13 @@ function normalizeChartData(chart) {
     .filter((item) => item.label && Number.isFinite(item.value));
 }
 
+function formatColumn(value) {
+  return value ? String(value).replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()) : '';
+}
+
 const axisTick = { fill: '#8b90a8', fontSize: 11 };
 const smallAxisTick = { fill: '#8b90a8', fontSize: 10 };
+const compactAxisTick = { fill: '#8b90a8', fontSize: 10, width: 120 };
 
 const tooltipStyle = {
   background: '#1a1d2e',

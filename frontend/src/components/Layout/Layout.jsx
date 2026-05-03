@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Upload, LayoutDashboard, MessageSquareText,
-  FileText, Settings, Sparkles, Activity
+  FileText, Sparkles, Activity
 } from 'lucide-react';
 import './Layout.css';
 

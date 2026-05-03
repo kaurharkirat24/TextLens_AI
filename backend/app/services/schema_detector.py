@@ -32,11 +32,75 @@ _DATE_SHAPE_RE = re.compile(
 )
 _WORD_RE = re.compile(r"\b[a-zA-Z][a-zA-Z'-]*\b")
 
+PRIMARY_TEXT_NAME_HINTS = (
+    "comment",
+    "commenttext",
+    "review",
+    "feedback",
+    "message",
+    "body",
+    "description",
+    "text",
+    "content",
+)
+SECONDARY_TEXT_NAME_HINTS = (
+    "title",
+    "name",
+    "author",
+    "channel",
+    "country",
+    "category",
+    "tag",
+    "url",
+    "link",
+    "id",
+)
+CONTENT_TITLE_HINTS = ("videotitle", "video_title", "title", "content_title", "post_title")
+CONTENT_ID_HINTS = ("videoid", "video_id", "content_id", "post_id", "item_id")
+DATETIME_HINTS = ("published", "created", "date", "time", "timestamp", "posted")
+ENGAGEMENT_HINTS = {
+    "likes": ("likes", "like_count", "likecount", "upvotes", "upvote_count"),
+    "replies": ("replies", "reply_count", "replycount", "responses", "response_count"),
+    "views": ("views", "view_count", "viewcount", "impressions"),
+    "comments": ("comments", "comment_count", "commentcount"),
+    "shares": ("shares", "share_count", "sharecount"),
+}
+
 
 def detect_schema(df: pd.DataFrame, sample_size: int = 5000) -> dict[str, ColumnType]:
     """Return ``{column_name: detected_type}`` for every DataFrame column."""
     sample = df.head(sample_size) if len(df) > sample_size else df
     return {column: _classify_column(sample[column]) for column in sample.columns}
+
+
+def detect_column_roles(df: pd.DataFrame, schema: dict[str, ColumnType], sample_size: int = 5000) -> dict:
+    """Detect semantic roles used by insight-driven analytics.
+
+    The schema remains shape-based for compatibility. Roles add product-level
+    meaning, most importantly selecting exactly one primary free-text column for
+    sentiment and keyword enrichment.
+    """
+    sample = df.head(sample_size) if len(df) > sample_size else df
+    text_cols = [col for col, kind in schema.items() if kind == "text" and col in sample.columns]
+    numeric_cols = [col for col, kind in schema.items() if kind == "numeric" and col in sample.columns]
+    datetime_cols = [col for col, kind in schema.items() if kind == "datetime" and col in sample.columns]
+
+    primary_text = _choose_primary_text(sample, text_cols)
+    secondary_text = [col for col in text_cols if col != primary_text]
+
+    roles = {
+        "primary_text": primary_text,
+        "secondary_text": secondary_text,
+        "content": {
+            "id": _first_matching_column(sample.columns, CONTENT_ID_HINTS, exclude={primary_text}),
+            "title": _first_matching_column(sample.columns, CONTENT_TITLE_HINTS, exclude={primary_text}),
+        },
+        "engagement": _detect_engagement_columns(numeric_cols),
+        "time": {
+            "primary_datetime": _choose_datetime_column(datetime_cols),
+        },
+    }
+    return roles
 
 
 def get_schema_summary(schema: dict[str, ColumnType]) -> dict:
@@ -54,6 +118,77 @@ def get_schema_summary(schema: dict[str, ColumnType]) -> dict:
         "summary": summary,
         "total_columns": len(schema),
     }
+
+
+def _choose_primary_text(df: pd.DataFrame, text_cols: list[str]) -> str | None:
+    if not text_cols:
+        return None
+    scored = [(_primary_text_score(df[col], col), col) for col in text_cols]
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return scored[0][1] if scored else None
+
+
+def _primary_text_score(series: pd.Series, column: str) -> float:
+    values = series.dropna().astype(str).str.strip()
+    values = values[values != ""]
+    if values.empty:
+        return 0.0
+
+    normalized = _normalize_name(column)
+    avg_chars = float(values.str.len().mean())
+    word_counts = values.str.count(_WORD_RE.pattern)
+    avg_words = float(word_counts.mean())
+    unique_ratio = float(values.nunique(dropna=True) / len(values))
+    non_empty_ratio = float(len(values) / max(len(series), 1))
+
+    score = min(avg_chars, 240) / 12
+    score += min(avg_words, 40) * 1.8
+    score += unique_ratio * 8
+    score += non_empty_ratio * 5
+
+    if any(hint in normalized for hint in PRIMARY_TEXT_NAME_HINTS):
+        score += 30
+    if any(hint in normalized for hint in SECONDARY_TEXT_NAME_HINTS):
+        score -= 24
+    return score
+
+
+def _first_matching_column(
+    columns: list[str] | pd.Index,
+    hints: tuple[str, ...],
+    exclude: set[str | None] | None = None,
+) -> str | None:
+    excluded = {value for value in (exclude or set()) if value}
+    for column in columns:
+        if column in excluded:
+            continue
+        normalized = _normalize_name(column)
+        if any(_normalize_name(hint) in normalized or hint == str(column).lower() for hint in hints):
+            return column
+    return None
+
+
+def _detect_engagement_columns(numeric_cols: list[str]) -> dict[str, str]:
+    engagement: dict[str, str] = {}
+    for metric, hints in ENGAGEMENT_HINTS.items():
+        match = _first_matching_column(numeric_cols, hints)
+        if match:
+            engagement[metric] = match
+    return engagement
+
+
+def _choose_datetime_column(datetime_cols: list[str]) -> str | None:
+    if not datetime_cols:
+        return None
+    for column in datetime_cols:
+        normalized = _normalize_name(column)
+        if any(hint in normalized for hint in DATETIME_HINTS):
+            return column
+    return datetime_cols[0]
+
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
 
 
 def _classify_column(series: pd.Series) -> ColumnType:

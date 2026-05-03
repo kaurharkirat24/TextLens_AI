@@ -13,7 +13,7 @@ import pandas as pd
 from app.services.chart_generator import generate_charts
 from app.services.data_processor import extract_keywords, process_dataframe
 from app.services.insight_engine import generate_insights
-from app.services.schema_detector import detect_schema, get_schema_summary
+from app.services.schema_detector import detect_column_roles, detect_schema, get_schema_summary
 
 MAX_ANALYSIS_ROWS = 10_000
 SAMPLE_ROWS = 50
@@ -25,7 +25,8 @@ def run_analysis(csv_path: str, dataset_id: str | None = None) -> dict:
     original_rows = len(raw_df)
 
     schema = detect_schema(raw_df)
-    processed_df, processing_report = process_dataframe(raw_df, schema)
+    column_roles = detect_column_roles(raw_df, schema)
+    processed_df, processing_report = process_dataframe(raw_df, schema, column_roles)
 
     sampled = False
     analysis_df = processed_df
@@ -33,9 +34,12 @@ def run_analysis(csv_path: str, dataset_id: str | None = None) -> dict:
         analysis_df = processed_df.sample(n=MAX_ANALYSIS_ROWS, random_state=42).reset_index(drop=True)
         sampled = True
 
-    text_cols = [col for col, kind in schema.items() if kind == "text" and col in analysis_df.columns]
+    primary_text = column_roles.get("primary_text")
+    text_cols = [primary_text] if primary_text in analysis_df.columns else [
+        col for col, kind in schema.items() if kind == "text" and col in analysis_df.columns
+    ]
     keywords = extract_keywords(analysis_df, text_cols, top_n=20)
-    insights = generate_insights(analysis_df, schema, processing_report, keywords)
+    insights = generate_insights(analysis_df, schema, processing_report, keywords, column_roles)
     charts = generate_charts(insights, schema)
 
     sample_columns = [
@@ -51,6 +55,7 @@ def run_analysis(csv_path: str, dataset_id: str | None = None) -> dict:
     response = {
         "dataset_id": dataset_id,
         "schema": get_schema_summary(schema),
+        "column_roles": column_roles,
         "processed_data_sample": processed_sample,
         "insights": insights,
         "charts": charts,
