@@ -7,11 +7,14 @@ import {
 import { uploadFile, getDatasetPreview } from '../../services/api';
 import './UploadPage.css';
 
+const LAST_UPLOAD_KEY = 'textlens:lastUploadResult';
+const SELECTED_DATASET_KEY = 'textlens:selectedDatasetId';
+
 export default function UploadPage() {
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState(() => readCachedUploadResult());
   const [error, setError] = useState(null);
   const [preview, setPreview] = useState(null);
   const [showIssues, setShowIssues] = useState(true);
@@ -28,6 +31,7 @@ export default function UploadPage() {
     setResult(null);
     setError(null);
     setPreview(null);
+    localStorage.removeItem(LAST_UPLOAD_KEY);
     setUploading(true);
     setUploadProgress(0);
 
@@ -36,6 +40,10 @@ export default function UploadPage() {
         if (e.total) setUploadProgress(Math.round((e.loaded / e.total) * 100));
       });
       setResult(data);
+      localStorage.setItem(LAST_UPLOAD_KEY, JSON.stringify(data));
+      if (data.dataset_id) {
+        localStorage.setItem(SELECTED_DATASET_KEY, data.dataset_id);
+      }
     } catch (err) {
       const msg = err.response?.data?.detail || err.message || 'Upload failed';
       setError(msg);
@@ -297,6 +305,16 @@ export default function UploadPage() {
 
 
 /* ── StatCard sub-component ─────────────────────────────────────────────── */
+
+function readCachedUploadResult() {
+  try {
+    const cached = localStorage.getItem(LAST_UPLOAD_KEY);
+    return cached ? JSON.parse(cached) : null;
+  } catch {
+    localStorage.removeItem(LAST_UPLOAD_KEY);
+    return null;
+  }
+}
 
 function StatCard({ label, value, accent = false, warn = false }) {
   return (

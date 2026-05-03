@@ -6,6 +6,7 @@ import {
   Database,
   Download,
   FileText,
+  Info,
   LayoutDashboard,
   Loader2,
   MessageSquareText,
@@ -58,6 +59,8 @@ const DASHBOARD_SECTIONS = [
   { id: 'time', title: 'Time Insights', icon: TrendingUp },
 ];
 
+const SELECTED_DATASET_KEY = 'textlens:selectedDatasetId';
+
 export default function DashboardPage() {
   const [datasets, setDatasets] = useState([]);
   const [selectedId, setSelectedId] = useState('');
@@ -66,6 +69,7 @@ export default function DashboardPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
+  const [toast, setToast] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -76,8 +80,10 @@ export default function DashboardPage() {
         if (!active) return;
 
         const available = (payload.datasets || []).filter((dataset) => dataset.status !== 'failed');
+        const cachedId = localStorage.getItem(SELECTED_DATASET_KEY);
+        const cachedAvailable = available.some((dataset) => dataset.id === cachedId);
         setDatasets(available);
-        setSelectedId((current) => current || available[0]?.id || '');
+        setSelectedId((current) => current || (cachedAvailable ? cachedId : available[0]?.id || ''));
       } catch (err) {
         if (active) setError(err.message || 'Unable to load datasets.');
       }
@@ -138,11 +144,13 @@ export default function DashboardPage() {
 
     setAnalyzing(true);
     setError('');
+    setToast('');
     setAnalysis(null);
 
     try {
       const payload = await analyzeDataset(selectedId);
       setAnalysis(payload);
+      localStorage.setItem(SELECTED_DATASET_KEY, selectedId);
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'Analysis failed.');
     } finally {
@@ -152,9 +160,14 @@ export default function DashboardPage() {
 
   const downloadCleanData = useCallback(async () => {
     if (!selectedId) return;
+    if (!analysis) {
+      setToast('Run analysis first to generate a clean dataset download.');
+      return;
+    }
 
     setDownloading(true);
     setError('');
+    setToast('');
     try {
       const { blob, filename } = await downloadCleanDataset(selectedId);
       const href = URL.createObjectURL(blob);
@@ -170,7 +183,7 @@ export default function DashboardPage() {
     } finally {
       setDownloading(false);
     }
-  }, [selectedId]);
+  }, [analysis, selectedId]);
 
   return (
     <main className="dashboard-page">
@@ -196,6 +209,11 @@ export default function DashboardPage() {
               onChange={(event) => {
                 setAnalysis(null);
                 setSelectedId(event.target.value);
+                if (event.target.value) {
+                  localStorage.setItem(SELECTED_DATASET_KEY, event.target.value);
+                } else {
+                  localStorage.removeItem(SELECTED_DATASET_KEY);
+                }
               }}
             >
               <option value="">Select a dataset</option>
@@ -217,7 +235,7 @@ export default function DashboardPage() {
         <button
           className="btn btn-secondary"
           type="button"
-          disabled={!selectedId || !analysis || downloading}
+          disabled={!selectedId || downloading}
           onClick={downloadCleanData}
         >
           {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
@@ -229,6 +247,14 @@ export default function DashboardPage() {
         <div className="dashboard-message dashboard-message--error card">
           <AlertTriangle size={18} />
           <span>{error}</span>
+        </div>
+      )}
+
+      {toast && (
+        <div className="dashboard-toast card" role="status">
+          <Info size={18} />
+          <span>{toast}</span>
+          <button type="button" onClick={() => setToast('')}>Dismiss</button>
         </div>
       )}
 
