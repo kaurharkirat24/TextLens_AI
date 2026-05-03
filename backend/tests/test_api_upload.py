@@ -1,4 +1,5 @@
 import json
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
@@ -72,3 +73,17 @@ def test_upload_csv_returns_report_and_preview(monkeypatch):
     assert saved_report["dataset_id"] == payload["dataset_id"]
     assert "row_indices" not in saved_report["issues"][0]
     assert "row_indices_sample" in saved_report["issues"][0]
+
+    analysis_response = client.post(f"/api/datasets/{payload['dataset_id']}/analyze")
+    assert analysis_response.status_code == 200
+    analysis = analysis_response.json()
+    assert analysis["cleaning_report"]["cleaning_status"] in {"cleaned", "already_clean"}
+    assert analysis["clean_dataset_path"]
+    assert len(analysis["charts"]) <= 8
+
+    download_response = client.get(f"/api/download/clean-dataset/{payload['dataset_id']}")
+    assert download_response.status_code == 200
+    assert "clean_feedback.csv" in download_response.headers["content-disposition"]
+
+    downloaded_df = pd.read_csv(BytesIO(download_response.content))
+    assert downloaded_df.columns.tolist() == ["ticket_id", "stars", "verbatim"]

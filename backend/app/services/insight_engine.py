@@ -15,9 +15,11 @@ def generate_insights(
     schema: dict[str, ColumnType],
     processing_report: dict | None = None,
     keywords: dict[str, list[dict]] | None = None,
+    column_roles: dict | None = None,
 ) -> dict[str, Any]:
     """Generate schema-driven insights from a processed DataFrame."""
     text_cols = _columns_of_type(schema, "text", df)
+    primary_text_cols = _primary_text_columns(text_cols, df, column_roles)
     numeric_cols = _columns_of_type(schema, "numeric", df)
     categorical_cols = _columns_of_type(schema, "categorical", df)
     datetime_cols = _columns_of_type(schema, "datetime", df)
@@ -32,19 +34,24 @@ def generate_insights(
                 "categorical": len(categorical_cols),
                 "datetime": len(datetime_cols),
             },
+            "column_roles": column_roles or {},
         }
     }
 
-    if text_cols:
-        insights["text"] = _text_insights(df, text_cols, keywords or {})
+    dataset_insights = _dataset_insights(df, schema, column_roles or {}, primary_text_cols)
+    if dataset_insights:
+        insights["dataset"] = dataset_insights
+
+    if primary_text_cols:
+        insights["text"] = _text_insights(df, primary_text_cols, keywords or {})
     if numeric_cols:
         insights["numeric"] = _numeric_insights(df, numeric_cols)
     if categorical_cols:
         insights["categorical"] = _categorical_insights(df, categorical_cols)
     if datetime_cols:
-        insights["datetime"] = _datetime_insights(df, datetime_cols, text_cols)
+        insights["datetime"] = _datetime_insights(df, datetime_cols, primary_text_cols)
 
-    combinations = _combination_insights(df, text_cols, numeric_cols, categorical_cols)
+    combinations = _combination_insights(df, primary_text_cols, numeric_cols, categorical_cols)
     if combinations:
         insights["combinations"] = combinations
 
@@ -55,6 +62,91 @@ def generate_insights(
         }
 
     return insights
+
+
+def _dataset_insights(
+    df: pd.DataFrame,
+    schema: dict[str, ColumnType],
+    column_roles: dict,
+    primary_text_cols: list[str],
+) -> dict[str, Any]:
+    dataset: dict[str, Any] = {}
+    content_roles = column_roles.get("content", {})
+    engagement_roles = column_roles.get("engagement", {})
+    geo_roles = column_roles.get("geo", {})
+    time_roles = column_roles.get("time", {})
+    primary_text = primary_text_cols[0] if primary_text_cols else None
+
+    content_col = content_roles.get("title") or content_roles.get("id")
+    if content_col in df.columns:
+        counts = df[content_col].astype(str).replace("", "(blank)").value_counts().head(10)
+        if not counts.empty:
+            dataset["top_content_by_comments"] = {
+                "content_col": content_col,
+                "items": [
+                    {"content": str(label), "comments": int(count)}
+                    for label, count in counts.items()
+                ],
+            }
+
+    datetime_col = time_roles.get("primary_datetime")
+    if datetime_col in df.columns:
+        comments_over_time = _volume_over_time(df[datetime_col])
+        if comments_over_time:
+            comments_over_time["datetime_col"] = datetime_col
+            dataset["comments_over_time"] = comments_over_time
+
+    distributions: dict[str, Any] = {}
+    for metric in ("likes", "replies"):
+        col = engagement_roles.get(metric)
+        if col in df.columns:
+            values = pd.to_numeric(df[col], errors="coerce").dropna()
+            if not values.empty:
+                distributions[metric] = {
+                    "column": col,
+                    "summary_stats": _series_stats(values),
+                    "histogram": _histogram(values),
+                }
+    if distributions:
+        dataset["engagement_distributions"] = distributions
+
+    geo_col = geo_roles.get("primary_geo")
+    if geo_col in df.columns:
+        values = df[geo_col].astype(str).str.strip().replace("", "(blank)")
+        counts = values.value_counts().head(10)
+        if not counts.empty and counts.index[0] != "(blank)":
+            dataset["top_geo"] = {
+                "geo_col": geo_col,
+                "items": [
+                    {"location": str(label), "comments": int(count)}
+                    for label, count in counts.items()
+                ],
+            }
+
+    if primary_text:
+        score_col = f"{primary_text}__sentiment_score"
+        metric_col = _preferred_engagement_metric(engagement_roles, df)
+        if score_col in df.columns and metric_col:
+            valid = pd.DataFrame(
+                {
+                    "x": pd.to_numeric(df[metric_col], errors="coerce"),
+                    "y": pd.to_numeric(df[score_col], errors="coerce"),
+                }
+            ).dropna()
+            if len(valid) >= 5 and valid["x"].nunique() >= 2:
+                correlation = valid["x"].corr(valid["y"])
+                dataset["engagement_vs_sentiment"] = {
+                    "engagement_col": metric_col,
+                    "sentiment_col": score_col,
+                    "correlation": round(float(correlation), 3) if not pd.isna(correlation) else None,
+                    "points": _sample_points(valid),
+                }
+
+    key_insights = _key_insights(df, schema, column_roles, dataset, primary_text)
+    if key_insights:
+        dataset["key_insights"] = key_insights
+
+    return dataset
 
 
 def _text_insights(df: pd.DataFrame, text_cols: list[str], keywords: dict[str, list[dict]]) -> dict:
@@ -168,6 +260,25 @@ def _datetime_insights(df: pd.DataFrame, datetime_cols: list[str], text_cols: li
             }
         results[col] = item
     return results
+
+
+def _volume_over_time(series: pd.Series) -> dict[str, Any] | None:
+    parsed = pd.to_datetime(series, errors="coerce")
+    valid = parsed.dropna()
+    if valid.empty:
+        return None
+    freq, freq_label = _time_frequency(valid)
+    counts = valid.dt.to_period(freq).value_counts().sort_index()
+    return {
+        "labels": [str(period) for period in counts.index],
+        "values": [int(v) for v in counts.values],
+        "frequency": freq_label,
+        "range": {
+            "earliest": valid.min().isoformat(),
+            "latest": valid.max().isoformat(),
+            "span_days": int((valid.max() - valid.min()).days) if len(valid) > 1 else 0,
+        },
+    }
 
 
 def _combination_insights(
@@ -307,3 +418,93 @@ def _interpret_correlation(value: float) -> str:
 
 def _columns_of_type(schema: dict[str, ColumnType], column_type: ColumnType, df: pd.DataFrame) -> list[str]:
     return [col for col, detected in schema.items() if detected == column_type and col in df.columns]
+
+
+def _primary_text_columns(text_cols: list[str], df: pd.DataFrame, column_roles: dict | None) -> list[str]:
+    primary = (column_roles or {}).get("primary_text")
+    if primary in df.columns:
+        return [primary]
+    return text_cols
+
+
+def _preferred_engagement_metric(engagement_roles: dict, df: pd.DataFrame) -> str | None:
+    for metric in ("likes", "replies", "views", "shares", "comments"):
+        col = engagement_roles.get(metric)
+        if col in df.columns:
+            return col
+    return None
+
+
+def _key_insights(
+    df: pd.DataFrame,
+    schema: dict[str, ColumnType],
+    column_roles: dict,
+    dataset: dict[str, Any],
+    primary_text: str | None,
+) -> list[dict[str, str]]:
+    insights = [
+        {
+            "label": "Primary text",
+            "value": _prettify(primary_text) if primary_text else "Not detected",
+            "detail": "Sentiment and keywords are generated from this column only.",
+        },
+        {
+            "label": "Rows analyzed",
+            "value": f"{len(df):,}",
+            "detail": f"{len(schema):,} columns scanned for dataset-level signals.",
+        },
+    ]
+
+    sentiment = {}
+    if primary_text:
+        label_col = f"{primary_text}__sentiment_label"
+        if label_col in df.columns:
+            sentiment = df[label_col].value_counts().to_dict()
+    if sentiment:
+        dominant, count = max(sentiment.items(), key=lambda item: item[1])
+        pct = round((count / len(df) * 100), 1) if len(df) else 0
+        insights.append(
+            {
+                "label": "Dominant sentiment",
+                "value": str(dominant).capitalize(),
+                "detail": f"{pct}% of analyzed rows are {dominant}.",
+            }
+        )
+
+    top_content = dataset.get("top_content_by_comments", {}).get("items", [])
+    if top_content:
+        insights.append(
+            {
+                "label": "Most discussed content",
+                "value": str(top_content[0]["content"]),
+                "detail": f"{top_content[0]['comments']:,} comments in the analyzed dataset.",
+            }
+        )
+
+    time_range = dataset.get("comments_over_time", {}).get("range")
+    if time_range:
+        insights.append(
+            {
+                "label": "Time span",
+                "value": f"{time_range.get('span_days', 0):,} days",
+                "detail": "Based on the primary datetime column.",
+            }
+        )
+
+    top_geo = dataset.get("top_geo", {}).get("items", [])
+    if top_geo:
+        insights.append(
+            {
+                "label": "Top location",
+                "value": str(top_geo[0]["location"]),
+                "detail": f"{top_geo[0]['comments']:,} comments from this segment.",
+            }
+        )
+
+    return insights[:5]
+
+
+def _prettify(value: str | None) -> str:
+    if not value:
+        return ""
+    return str(value).replace("_", " ").replace("-", " ").title()

@@ -142,10 +142,14 @@ _CONTRACTION_RE = re.compile(r"\b(" + "|".join(re.escape(k) for k in CONTRACTION
 _EMOJI_RE = re.compile("|".join(re.escape(k) for k in EMOJI_MAP))
 
 
-def process_dataframe(df: pd.DataFrame, schema: dict[str, ColumnType]) -> tuple[pd.DataFrame, dict]:
+def process_dataframe(
+    df: pd.DataFrame,
+    schema: dict[str, ColumnType],
+    column_roles: dict | None = None,
+) -> tuple[pd.DataFrame, dict]:
     """Clean and enrich a DataFrame according to the detected schema."""
     cleaned, cleaning_report = clean_dataframe(df, schema)
-    enriched, enrichment_report = enrich_dataframe(cleaned, schema)
+    enriched, enrichment_report = enrich_dataframe(cleaned, schema, column_roles)
     return enriched, {
         "cleaning": cleaning_report,
         "enrichment": enrichment_report,
@@ -169,10 +173,14 @@ def clean_dataframe(df: pd.DataFrame, schema: dict[str, ColumnType]) -> tuple[pd
     datetime_cols = _columns_of_type(schema, "datetime", clean)
 
     text_cells_cleaned = 0
+    text_cells_changed = 0
     for col in text_cols:
         non_null = clean[col].notna()
         text_cells_cleaned += int(non_null.sum())
-        clean.loc[non_null, col] = _clean_text_series(clean.loc[non_null, col])
+        before_text = clean.loc[non_null, col].astype(str)
+        after_text = _clean_text_series(clean.loc[non_null, col])
+        text_cells_changed += int((before_text != after_text).sum())
+        clean.loc[non_null, col] = after_text
 
     # Fill remaining nulls so processed samples and analytics payloads are JSON-safe.
     null_cells_before_fill = int(clean.isna().sum().sum())
@@ -196,30 +204,53 @@ def clean_dataframe(df: pd.DataFrame, schema: dict[str, ColumnType]) -> tuple[pd
     clean = clean.drop_duplicates()
     duplicate_rows_removed = before - len(clean)
 
+    rows_removed = original_rows - len(clean)
+    cleaned_changed = any(
+        (
+            null_rows_removed,
+            duplicate_rows_removed,
+            null_cells_before_fill,
+            text_cells_changed,
+        )
+    )
+
     return clean.reset_index(drop=True), {
+        "rows_before": original_rows,
+        "rows_after": len(clean),
+        "duplicates_removed": duplicate_rows_removed,
+        "nulls_removed": null_rows_removed,
+        "columns_processed": text_cols + categorical_cols + numeric_cols + datetime_cols,
+        "cleaning_status": "cleaned" if cleaned_changed else "already_clean",
         "original_rows": original_rows,
         "final_rows": len(clean),
-        "rows_removed": original_rows - len(clean),
+        "rows_removed": rows_removed,
         "null_rows_removed": null_rows_removed,
         "duplicate_rows_removed": duplicate_rows_removed,
         "original_null_cells": original_null_cells,
         "null_cells_filled": null_cells_before_fill,
         "remaining_null_cells": int(clean.isna().sum().sum()),
         "text_cells_cleaned": text_cells_cleaned,
+        "text_cells_changed": text_cells_changed,
     }
 
 
-def enrich_dataframe(df: pd.DataFrame, schema: dict[str, ColumnType]) -> tuple[pd.DataFrame, dict]:
+def enrich_dataframe(
+    df: pd.DataFrame,
+    schema: dict[str, ColumnType],
+    column_roles: dict | None = None,
+) -> tuple[pd.DataFrame, dict]:
     """Add sentiment, word counts, and type-level summary stats."""
     enriched = df.copy()
     report: dict[str, Any] = {
+        "primary_text": (column_roles or {}).get("primary_text"),
+        "secondary_text": (column_roles or {}).get("secondary_text", []),
         "text_enrichments": [],
         "numeric_stats": {},
         "categorical_stats": {},
         "datetime_stats": {},
     }
 
-    for col in _columns_of_type(schema, "text", enriched):
+    for col in _text_columns_for_enrichment(schema, enriched, column_roles):
         text = enriched[col].fillna("").astype(str)
         words = text.str.findall(_WORD_RE)
         enriched[f"{col}__word_count"] = words.str.len().astype(int)
@@ -329,3 +360,13 @@ def _numeric_stats(series: pd.Series) -> dict[str, float | int | None]:
 
 def _columns_of_type(schema: dict[str, ColumnType], column_type: ColumnType, df: pd.DataFrame) -> list[str]:
     return [col for col, detected in schema.items() if detected == column_type and col in df.columns]
+
+
+def _text_columns_for_enrichment(
+    schema: dict[str, ColumnType],
+    df: pd.DataFrame,
+    column_roles: dict | None,
+) -> list[str]:
+    if column_roles and column_roles.get("primary_text") in df.columns:
+        return [column_roles["primary_text"]]
+    return _columns_of_type(schema, "text", df)

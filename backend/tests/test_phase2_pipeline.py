@@ -1,10 +1,12 @@
+from collections import Counter
+
 import pandas as pd
 
 from app.services.chart_generator import generate_charts
 from app.services.data_processor import process_dataframe
 from app.services.insight_engine import generate_insights
 from app.services.pipeline import run_analysis
-from app.services.schema_detector import detect_schema
+from app.services.schema_detector import detect_column_roles, detect_schema
 
 
 def test_phase2_pipeline_detects_processes_insights_and_charts():
@@ -59,3 +61,39 @@ def test_run_analysis_returns_json_safe_payload():
     assert result["insights"]
     assert result["charts"]
     assert result["stats"]["total_charts_generated"] == len(result["charts"])
+    assert len(result["charts"]) <= 8
+    assert max(Counter(chart.get("section", "other") for chart in result["charts"]).values()) <= 2
+
+
+def test_role_detection_limits_sentiment_to_primary_text():
+    df = pd.DataFrame(
+        {
+            "VideoTitle": [
+                "Full launch recap and release notes",
+                "Full launch recap and release notes",
+                "Detailed pricing update and roadmap discussion",
+            ],
+            "CommentText": [
+                "I love the new release and the walkthrough was helpful",
+                "Terrible support experience after the release",
+                "Great update, the pricing explanation was clear",
+            ],
+            "Likes": [12, 1, 8],
+            "Replies": [2, 0, 1],
+            "PublishedAt": ["2026-01-01", "2026-01-02", "2026-01-03"],
+        }
+    )
+
+    schema = detect_schema(df)
+    roles = detect_column_roles(df, schema)
+    processed, report = process_dataframe(df, schema, roles)
+    insights = generate_insights(processed, schema, report, {"CommentText": []}, roles)
+    charts = generate_charts(insights, schema)
+
+    assert roles["primary_text"] == "CommentText"
+    assert "VideoTitle" in roles["secondary_text"]
+    assert "CommentText__sentiment_label" in processed.columns
+    assert "VideoTitle__sentiment_label" not in processed.columns
+    assert sum(chart["title"] == "Sentiment Distribution" for chart in charts) == 1
+    assert all(chart["title"] != "Column Type Distribution" for chart in charts)
+    assert len(charts) <= 8

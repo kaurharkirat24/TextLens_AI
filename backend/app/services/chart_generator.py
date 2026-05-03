@@ -26,6 +26,17 @@ CHART_PALETTE = [
     "#a3e635",
 ]
 
+MAX_CHARTS = 8
+MAX_CHARTS_PER_SECTION = 2
+SECTION_PRIORITY = {
+    "key": 0,
+    "time": 1,
+    "content": 2,
+    "engagement": 3,
+    "geo": 4,
+    "other": 5,
+}
+
 
 def generate_charts(
     insights: dict,
@@ -33,45 +44,172 @@ def generate_charts(
     keywords: dict | None = None,
     enrichment_report: dict | None = None,
 ) -> list[dict]:
-    """Convert insights into chart configs with ``type``, ``x``, ``y``, and ``data``."""
+    """Convert insights into curated analytics chart configs."""
     charts: list[dict] = []
 
-    for col, item in insights.get("text", {}).items():
-        charts.extend(_text_charts(col, item))
+    charts.extend(_dataset_charts(insights.get("dataset", {})))
 
-    for col, item in insights.get("numeric", {}).items():
-        charts.extend(_numeric_charts(col, item))
+    column_roles = insights.get("summary", {}).get("column_roles", {})
+    primary_text = column_roles.get("primary_text")
+    text_insights = insights.get("text", {})
+    if primary_text and primary_text in text_insights:
+        charts.extend(_primary_text_charts(primary_text, text_insights[primary_text]))
+    elif len(text_insights) == 1:
+        col, item = next(iter(text_insights.items()))
+        charts.extend(_primary_text_charts(col, item))
 
-    for col, item in insights.get("categorical", {}).items():
-        charts.extend(_categorical_charts(col, item))
+    charts = _prioritize_charts(_dedupe_charts(charts))
 
-    for col, item in insights.get("datetime", {}).items():
-        charts.extend(_datetime_charts(col, item))
+    return charts
 
-    for key, item in insights.get("combinations", {}).items():
-        charts.extend(_combination_charts(key, item))
 
-    summary = insights.get("summary", {})
-    column_types = summary.get("column_types", {})
-    if any(column_types.values()):
-        labels = [key for key, value in column_types.items() if value]
-        values = [int(column_types[key]) for key in labels]
+def _dataset_charts(dataset: dict) -> list[dict]:
+    charts: list[dict] = []
+
+    top_content = dataset.get("top_content_by_comments", {})
+    items = top_content.get("items", [])
+    if items:
+        labels = [entry["content"] for entry in items]
+        values = [int(entry["comments"]) for entry in items]
         charts.append(
             _chart(
-                seed="column_types",
-                chart_type="donut",
-                title="Column Type Distribution",
-                subtitle=f"{summary.get('total_columns', 0)} columns detected",
-                x=[label.capitalize() for label in labels],
+                seed="top_content_by_comments",
+                chart_type="horizontal_bar",
+                title="Top Videos by Comment Count",
+                subtitle=f"Grouped by {_prettify(top_content.get('content_col', 'content'))}",
+                x=labels,
                 y=values,
                 data=[
-                    {
-                        "name": label.capitalize(),
-                        "value": value,
-                        "color": CHART_PALETTE[i % len(CHART_PALETTE)],
-                    }
+                    {"label": label, "value": value, "color": CHART_PALETTE[i % len(CHART_PALETTE)]}
                     for i, (label, value) in enumerate(zip(labels, values))
                 ],
+                color="#4f6ef7",
+                section="content",
+            )
+        )
+
+    engagement = dataset.get("engagement_vs_sentiment", {})
+    points = engagement.get("points", [])
+    if points:
+        charts.append(
+            _chart(
+                seed="engagement_vs_sentiment",
+                chart_type="scatter",
+                title="Engagement vs Sentiment",
+                subtitle=f"{_prettify(engagement.get('engagement_col', 'engagement'))} compared with sentiment score",
+                x=[point["x"] for point in points],
+                y=[point["y"] for point in points],
+                data=points,
+                x_label=_prettify(engagement.get("engagement_col", "Engagement")),
+                y_label="Sentiment score",
+                color="#f472b6",
+                section="engagement",
+            )
+        )
+
+    comments_over_time = dataset.get("comments_over_time", {})
+    if comments_over_time.get("values"):
+        charts.append(
+            _chart(
+                seed="comments_over_time",
+                chart_type="area",
+                title="Comments Over Time",
+                subtitle=f"Comment volume by {comments_over_time.get('frequency', 'period')}",
+                x=comments_over_time.get("labels", []),
+                y=comments_over_time.get("values", []),
+                color="#38bdf8",
+                section="time",
+            )
+        )
+
+    distributions = dataset.get("engagement_distributions", {})
+    for metric, item in distributions.items():
+        histogram = item.get("histogram", {})
+        if not histogram.get("counts"):
+            continue
+        charts.append(
+            _chart(
+                seed=f"{metric}_distribution",
+                chart_type="histogram",
+                title=f"{_prettify(metric)} Distribution",
+                subtitle=f"Distribution of {_prettify(item.get('column', metric))}",
+                x=histogram.get("labels", []),
+                y=histogram.get("counts", []),
+                color="#34d399" if metric == "likes" else "#fbbf24",
+                section="engagement",
+            )
+        )
+
+    top_geo = dataset.get("top_geo", {})
+    geo_items = top_geo.get("items", [])
+    if geo_items:
+        labels = [entry["location"] for entry in geo_items]
+        values = [int(entry["comments"]) for entry in geo_items]
+        charts.append(
+            _chart(
+                seed="top_geo",
+                chart_type="bar",
+                title="Top Locations",
+                subtitle=f"Grouped by {_prettify(top_geo.get('geo_col', 'location'))}",
+                x=labels,
+                y=values,
+                data=[
+                    {"label": label, "value": value, "color": CHART_PALETTE[i % len(CHART_PALETTE)]}
+                    for i, (label, value) in enumerate(zip(labels, values))
+                ],
+                section="geo",
+            )
+        )
+
+    return charts
+
+
+def _primary_text_charts(col: str, item: dict) -> list[dict]:
+    charts = []
+    sentiment = item.get("sentiment_distribution")
+    if sentiment:
+        counts = sentiment.get("counts", {})
+        labels = [label for label in ("positive", "neutral", "negative") if label in counts]
+        values = [int(counts[label]) for label in labels]
+        data = [
+            {
+                "name": label.capitalize(),
+                "value": int(counts[label]),
+                "percentage": sentiment.get("percentages", {}).get(label, 0),
+                "color": SENTIMENT_COLORS.get(label, "#8b90a8"),
+            }
+            for label in labels
+        ]
+        charts.append(
+            _chart(
+                seed=f"primary_sentiment_{col}",
+                chart_type="donut",
+                title="Sentiment Distribution",
+                subtitle=f"Primary text: {_prettify(col)}",
+                x=[label.capitalize() for label in labels],
+                y=values,
+                data=data,
+                section="key",
+            )
+        )
+
+    keywords = item.get("keywords", [])
+    if keywords:
+        top = keywords[:12]
+        charts.append(
+            _chart(
+                seed=f"primary_keywords_{col}",
+                chart_type="horizontal_bar",
+                title="Top Keywords",
+                subtitle=f"Primary text: {_prettify(col)}",
+                x=[entry["word"] for entry in top],
+                y=[int(entry["count"]) for entry in top],
+                data=[
+                    {"label": entry["word"], "value": int(entry["count"])}
+                    for entry in top
+                ],
+                color="#4f6ef7",
+                section="content",
             )
         )
 
@@ -346,6 +484,39 @@ def _chart(
     }
     payload.update(extra)
     return payload
+
+
+def _dedupe_charts(charts: list[dict]) -> list[dict]:
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict] = []
+    for chart in charts:
+        key = (chart.get("section", ""), chart.get("title", ""), tuple(chart.get("x", [])[:5]))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(chart)
+    return unique
+
+
+def _prioritize_charts(charts: list[dict]) -> list[dict]:
+    ordered = sorted(
+        enumerate(charts),
+        key=lambda item: (
+            SECTION_PRIORITY.get(item[1].get("section", "other"), SECTION_PRIORITY["other"]),
+            item[0],
+        ),
+    )
+    selected: list[dict] = []
+    section_counts: dict[str, int] = {}
+    for _, chart in ordered:
+        section = chart.get("section", "other")
+        if section_counts.get(section, 0) >= MAX_CHARTS_PER_SECTION:
+            continue
+        selected.append(chart)
+        section_counts[section] = section_counts.get(section, 0) + 1
+        if len(selected) >= MAX_CHARTS:
+            break
+    return selected
 
 
 def _prettify(value: str) -> str:
