@@ -1,3 +1,5 @@
+from collections import Counter
+
 import pandas as pd
 
 from app.services.chart_generator import generate_charts
@@ -59,6 +61,8 @@ def test_run_analysis_returns_json_safe_payload():
     assert result["insights"]
     assert result["charts"]
     assert result["stats"]["total_charts_generated"] == len(result["charts"])
+    assert len(result["charts"]) <= 8
+    assert max(Counter(chart.get("section", "other") for chart in result["charts"]).values()) <= 2
 
 
 def test_role_detection_limits_sentiment_to_primary_text():
@@ -92,3 +96,4 @@ def test_role_detection_limits_sentiment_to_primary_text():
     assert "VideoTitle__sentiment_label" not in processed.columns
     assert sum(chart["title"] == "Sentiment Distribution" for chart in charts) == 1
     assert all(chart["title"] != "Column Type Distribution" for chart in charts)
+    assert len(charts) <= 8

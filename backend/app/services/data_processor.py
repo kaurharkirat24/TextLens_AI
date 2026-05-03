@@ -173,10 +173,14 @@ def clean_dataframe(df: pd.DataFrame, schema: dict[str, ColumnType]) -> tuple[pd
     datetime_cols = _columns_of_type(schema, "datetime", clean)
 
     text_cells_cleaned = 0
+    text_cells_changed = 0
     for col in text_cols:
         non_null = clean[col].notna()
         text_cells_cleaned += int(non_null.sum())
-        clean.loc[non_null, col] = _clean_text_series(clean.loc[non_null, col])
+        before_text = clean.loc[non_null, col].astype(str)
+        after_text = _clean_text_series(clean.loc[non_null, col])
+        text_cells_changed += int((before_text != after_text).sum())
+        clean.loc[non_null, col] = after_text
 
     # Fill remaining nulls so processed samples and analytics payloads are JSON-safe.
     null_cells_before_fill = int(clean.isna().sum().sum())
@@ -200,16 +204,33 @@ def clean_dataframe(df: pd.DataFrame, schema: dict[str, ColumnType]) -> tuple[pd
     clean = clean.drop_duplicates()
     duplicate_rows_removed = before - len(clean)
 
+    rows_removed = original_rows - len(clean)
+    cleaned_changed = any(
+        (
+            null_rows_removed,
+            duplicate_rows_removed,
+            null_cells_before_fill,
+            text_cells_changed,
+        )
+    )
+
     return clean.reset_index(drop=True), {
+        "rows_before": original_rows,
+        "rows_after": len(clean),
+        "duplicates_removed": duplicate_rows_removed,
+        "nulls_removed": null_rows_removed,
+        "columns_processed": text_cols + categorical_cols + numeric_cols + datetime_cols,
+        "cleaning_status": "cleaned" if cleaned_changed else "already_clean",
         "original_rows": original_rows,
         "final_rows": len(clean),
-        "rows_removed": original_rows - len(clean),
+        "rows_removed": rows_removed,
         "null_rows_removed": null_rows_removed,
         "duplicate_rows_removed": duplicate_rows_removed,
         "original_null_cells": original_null_cells,
         "null_cells_filled": null_cells_before_fill,
         "remaining_null_cells": int(clean.isna().sum().sum()),
         "text_cells_cleaned": text_cells_cleaned,
+        "text_cells_changed": text_cells_changed,
     }
 
 

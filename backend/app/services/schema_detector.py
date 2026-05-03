@@ -58,6 +58,16 @@ SECONDARY_TEXT_NAME_HINTS = (
 CONTENT_TITLE_HINTS = ("videotitle", "video_title", "title", "content_title", "post_title")
 CONTENT_ID_HINTS = ("videoid", "video_id", "content_id", "post_id", "item_id")
 DATETIME_HINTS = ("published", "created", "date", "time", "timestamp", "posted")
+GEO_HINTS = (
+    "country",
+    "countrycode",
+    "region",
+    "state",
+    "province",
+    "city",
+    "location",
+    "locale",
+)
 ENGAGEMENT_HINTS = {
     "likes": ("likes", "like_count", "likecount", "upvotes", "upvote_count"),
     "replies": ("replies", "reply_count", "replycount", "responses", "response_count"),
@@ -96,6 +106,12 @@ def detect_column_roles(df: pd.DataFrame, schema: dict[str, ColumnType], sample_
             "title": _first_matching_column(sample.columns, CONTENT_TITLE_HINTS, exclude={primary_text}),
         },
         "engagement": _detect_engagement_columns(numeric_cols),
+        "geo": {
+            "primary_geo": _first_matching_column(
+                [col for col, kind in schema.items() if kind == "categorical" and col in sample.columns],
+                GEO_HINTS,
+            ),
+        },
         "time": {
             "primary_datetime": _choose_datetime_column(datetime_cols),
         },

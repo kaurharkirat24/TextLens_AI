@@ -73,6 +73,7 @@ def _dataset_insights(
     dataset: dict[str, Any] = {}
     content_roles = column_roles.get("content", {})
     engagement_roles = column_roles.get("engagement", {})
+    geo_roles = column_roles.get("geo", {})
     time_roles = column_roles.get("time", {})
     primary_text = primary_text_cols[0] if primary_text_cols else None
 
@@ -108,6 +109,19 @@ def _dataset_insights(
                 }
     if distributions:
         dataset["engagement_distributions"] = distributions
+
+    geo_col = geo_roles.get("primary_geo")
+    if geo_col in df.columns:
+        values = df[geo_col].astype(str).str.strip().replace("", "(blank)")
+        counts = values.value_counts().head(10)
+        if not counts.empty and counts.index[0] != "(blank)":
+            dataset["top_geo"] = {
+                "geo_col": geo_col,
+                "items": [
+                    {"location": str(label), "comments": int(count)}
+                    for label, count in counts.items()
+                ],
+            }
 
     if primary_text:
         score_col = f"{primary_text}__sentiment_score"
@@ -474,6 +488,16 @@ def _key_insights(
                 "label": "Time span",
                 "value": f"{time_range.get('span_days', 0):,} days",
                 "detail": "Based on the primary datetime column.",
+            }
+        )
+
+    top_geo = dataset.get("top_geo", {}).get("items", [])
+    if top_geo:
+        insights.append(
+            {
+                "label": "Top location",
+                "value": str(top_geo[0]["location"]),
+                "detail": f"{top_geo[0]['comments']:,} comments from this segment.",
             }
         )
 

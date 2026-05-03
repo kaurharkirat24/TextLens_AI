@@ -4,6 +4,7 @@ import {
   BarChart3,
   ChevronDown,
   Database,
+  Download,
   FileText,
   LayoutDashboard,
   Loader2,
@@ -34,7 +35,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { analyzeDataset, getAnalysis, getDatasets } from '../../services/api';
+import { analyzeDataset, downloadCleanDataset, getAnalysis, getDatasets } from '../../services/api';
 import './DashboardPage.css';
 
 const CHART_COLORS = [
@@ -63,6 +64,7 @@ export default function DashboardPage() {
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -148,6 +150,28 @@ export default function DashboardPage() {
     }
   }, [selectedId]);
 
+  const downloadCleanData = useCallback(async () => {
+    if (!selectedId) return;
+
+    setDownloading(true);
+    setError('');
+    try {
+      const { blob, filename } = await downloadCleanDataset(selectedId);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || 'Unable to download clean dataset.');
+    } finally {
+      setDownloading(false);
+    }
+  }, [selectedId]);
+
   return (
     <main className="dashboard-page">
       <header className="dashboard-header">
@@ -189,6 +213,16 @@ export default function DashboardPage() {
           {analyzing ? <Loader2 size={16} className="animate-spin" /> : analysis ? <RefreshCw size={16} /> : <Play size={16} />}
           {analysis ? 'Re-analyze' : 'Analyze'}
         </button>
+
+        <button
+          className="btn btn-secondary"
+          type="button"
+          disabled={!selectedId || !analysis || downloading}
+          onClick={downloadCleanData}
+        >
+          {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+          Download Clean Data
+        </button>
       </section>
 
       {error && (
@@ -217,6 +251,7 @@ export default function DashboardPage() {
         <>
           <DashboardSection title="Overview" icon={BarChart3}>
             <StatsStrip analysis={analysis} chartCount={charts.length} />
+            <CleaningSummary report={analysis.cleaning_report} />
           </DashboardSection>
 
           {(keyInsights.length > 0 || chartsBySection.key.length > 0) && (
@@ -264,6 +299,40 @@ export default function DashboardPage() {
         </>
       )}
     </main>
+  );
+}
+
+function CleaningSummary({ report }) {
+  if (!report) {
+    return null;
+  }
+
+  const status = report.cleaning_status === 'already_clean' ? 'Already clean' : 'Cleaned';
+  const rowsBefore = Number(report.rows_before ?? report.original_rows ?? 0);
+  const rowsAfter = Number(report.rows_after ?? report.final_rows ?? 0);
+  const duplicates = Number(report.duplicates_removed ?? report.duplicate_rows_removed ?? 0);
+  const nulls = Number(report.nulls_removed ?? report.null_rows_removed ?? 0);
+  const columns = report.columns_processed || [];
+
+  return (
+    <div className="cleaning-summary card">
+      <div>
+        <span>Cleaning status</span>
+        <strong>{status}</strong>
+      </div>
+      <div>
+        <span>Rows</span>
+        <strong>{rowsBefore.toLocaleString()} to {rowsAfter.toLocaleString()}</strong>
+      </div>
+      <div>
+        <span>Removed</span>
+        <strong>{duplicates.toLocaleString()} duplicates, {nulls.toLocaleString()} null rows</strong>
+      </div>
+      <div>
+        <span>Columns processed</span>
+        <strong>{columns.length ? columns.map(formatColumn).join(', ') : 'N/A'}</strong>
+      </div>
+    </div>
   );
 }
 

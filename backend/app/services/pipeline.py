@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import math
 import os
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from app.services.chart_generator import generate_charts
-from app.services.data_processor import extract_keywords, process_dataframe
+from app.services.data_processor import clean_dataframe, enrich_dataframe, extract_keywords
 from app.services.insight_engine import generate_insights
 from app.services.schema_detector import detect_column_roles, detect_schema, get_schema_summary
 
@@ -19,14 +20,29 @@ MAX_ANALYSIS_ROWS = 10_000
 SAMPLE_ROWS = 50
 
 
-def run_analysis(csv_path: str, dataset_id: str | None = None) -> dict:
+def run_analysis(
+    csv_path: str,
+    dataset_id: str | None = None,
+    clean_output_dir: str | None = None,
+    clean_filename: str | None = None,
+    clean_columns: list[str] | None = None,
+) -> dict:
     """Run schema detection, processing, insights, and chart generation."""
     raw_df = load_csv(csv_path)
     original_rows = len(raw_df)
 
     schema = detect_schema(raw_df)
     column_roles = detect_column_roles(raw_df, schema)
-    processed_df, processing_report = process_dataframe(raw_df, schema, column_roles)
+    cleaned_df, cleaning_report = clean_dataframe(raw_df, schema)
+    processed_df, enrichment_report = enrich_dataframe(cleaned_df, schema, column_roles)
+    processing_report = {
+        "cleaning": cleaning_report,
+        "enrichment": enrichment_report,
+    }
+
+    clean_dataset_path = None
+    if clean_output_dir and clean_filename:
+        clean_dataset_path = save_clean_dataset(cleaned_df, clean_output_dir, clean_filename, clean_columns)
 
     sampled = False
     analysis_df = processed_df
@@ -61,6 +77,7 @@ def run_analysis(csv_path: str, dataset_id: str | None = None) -> dict:
         "charts": charts,
         "keywords": keywords,
         "cleaning_report": processing_report["cleaning"],
+        "clean_dataset_path": clean_dataset_path,
         "enrichment_report": processing_report["enrichment"],
         "stats": {
             "total_rows_original": original_rows,
@@ -72,6 +89,25 @@ def run_analysis(csv_path: str, dataset_id: str | None = None) -> dict:
         },
     }
     return sanitize_for_json(response)
+
+
+def save_clean_dataset(
+    cleaned_df: pd.DataFrame,
+    output_dir: str,
+    original_filename: str,
+    columns: list[str] | None = None,
+) -> str:
+    """Persist the cleaned, pre-enrichment dataset as UTF-8 CSV."""
+    os.makedirs(output_dir, exist_ok=True)
+    stem = Path(original_filename).stem or "dataset"
+    path = os.path.join(output_dir, f"clean_{stem}.csv")
+    output_df = cleaned_df
+    if columns:
+        preserved = [column for column in columns if column in output_df.columns]
+        if preserved:
+            output_df = output_df[preserved]
+    output_df.to_csv(path, index=False, encoding="utf-8")
+    return path
 
 
 def load_csv(path: str) -> pd.DataFrame:

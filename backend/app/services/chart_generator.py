@@ -26,6 +26,17 @@ CHART_PALETTE = [
     "#a3e635",
 ]
 
+MAX_CHARTS = 8
+MAX_CHARTS_PER_SECTION = 2
+SECTION_PRIORITY = {
+    "key": 0,
+    "time": 1,
+    "content": 2,
+    "engagement": 3,
+    "geo": 4,
+    "other": 5,
+}
+
 
 def generate_charts(
     insights: dict,
@@ -47,7 +58,7 @@ def generate_charts(
         col, item = next(iter(text_insights.items()))
         charts.extend(_primary_text_charts(col, item))
 
-    charts = _dedupe_charts(charts)
+    charts = _prioritize_charts(_dedupe_charts(charts))
 
     return charts
 
@@ -126,6 +137,27 @@ def _dataset_charts(dataset: dict) -> list[dict]:
                 y=histogram.get("counts", []),
                 color="#34d399" if metric == "likes" else "#fbbf24",
                 section="engagement",
+            )
+        )
+
+    top_geo = dataset.get("top_geo", {})
+    geo_items = top_geo.get("items", [])
+    if geo_items:
+        labels = [entry["location"] for entry in geo_items]
+        values = [int(entry["comments"]) for entry in geo_items]
+        charts.append(
+            _chart(
+                seed="top_geo",
+                chart_type="bar",
+                title="Top Locations",
+                subtitle=f"Grouped by {_prettify(top_geo.get('geo_col', 'location'))}",
+                x=labels,
+                y=values,
+                data=[
+                    {"label": label, "value": value, "color": CHART_PALETTE[i % len(CHART_PALETTE)]}
+                    for i, (label, value) in enumerate(zip(labels, values))
+                ],
+                section="geo",
             )
         )
 
@@ -458,12 +490,33 @@ def _dedupe_charts(charts: list[dict]) -> list[dict]:
     seen: set[tuple[str, str]] = set()
     unique: list[dict] = []
     for chart in charts:
-        key = (chart.get("section", ""), chart.get("title", ""))
+        key = (chart.get("section", ""), chart.get("title", ""), tuple(chart.get("x", [])[:5]))
         if key in seen:
             continue
         seen.add(key)
         unique.append(chart)
     return unique
+
+
+def _prioritize_charts(charts: list[dict]) -> list[dict]:
+    ordered = sorted(
+        enumerate(charts),
+        key=lambda item: (
+            SECTION_PRIORITY.get(item[1].get("section", "other"), SECTION_PRIORITY["other"]),
+            item[0],
+        ),
+    )
+    selected: list[dict] = []
+    section_counts: dict[str, int] = {}
+    for _, chart in ordered:
+        section = chart.get("section", "other")
+        if section_counts.get(section, 0) >= MAX_CHARTS_PER_SECTION:
+            continue
+        selected.append(chart)
+        section_counts[section] = section_counts.get(section, 0) + 1
+        if len(selected) >= MAX_CHARTS:
+            break
+    return selected
 
 
 def _prettify(value: str) -> str:
