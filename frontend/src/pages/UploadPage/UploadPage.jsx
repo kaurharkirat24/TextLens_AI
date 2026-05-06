@@ -17,6 +17,8 @@ export default function UploadPage() {
   const [result, setResult] = useState(() => readCachedUploadResult());
   const [error, setError] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const [showIssues, setShowIssues] = useState(true);
   const fileInputRef = useRef(null);
 
@@ -28,9 +30,15 @@ export default function UploadPage() {
   }, []);
 
   const processFile = useCallback(async (file) => {
+    console.info('[TextLens Upload] Starting upload', {
+      file_name: file.name,
+      file_size: file.size,
+      file_type: file.type,
+    });
     setResult(null);
     setError(null);
     setPreview(null);
+    setPreviewError('');
     localStorage.removeItem(LAST_UPLOAD_KEY);
     setUploading(true);
     setUploadProgress(0);
@@ -44,11 +52,20 @@ export default function UploadPage() {
       if (data.dataset_id) {
         localStorage.setItem(SELECTED_DATASET_KEY, data.dataset_id);
       }
+      console.info('[TextLens Upload] Upload completed', {
+        dataset_id: data.dataset_id,
+        success: data.report?.success,
+      });
     } catch (err) {
       const msg = err.response?.data?.detail || err.message || 'Upload failed';
       setError(msg);
+      console.error('[TextLens Upload] Upload failed', err.response?.data || err);
     } finally {
       setUploading(false);
+      setUploadProgress(0);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   }, []);
 
@@ -67,11 +84,21 @@ export default function UploadPage() {
 
   const loadPreview = async () => {
     if (!result?.dataset_id) return;
+    setPreviewLoading(true);
+    setPreviewError('');
     try {
       const data = await getDatasetPreview(result.dataset_id, 20);
       setPreview(data);
-    } catch {
-      /* silently fail */
+      console.info('[TextLens Upload] Preview loaded', {
+        dataset_id: result.dataset_id,
+        showing: data.showing,
+      });
+    } catch (err) {
+      const msg = err.response?.data?.detail || err.message || 'Unable to load preview.';
+      setPreviewError(msg);
+      console.error('[TextLens Upload] Preview failed', err.response?.data || err);
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -106,13 +133,16 @@ export default function UploadPage() {
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
         onDrop={handleDrop}
-        onClick={() => fileInputRef.current?.click()}
+        onClick={() => {
+          if (!uploading) fileInputRef.current?.click();
+        }}
       >
         <input
           ref={fileInputRef}
           type="file"
           accept=".csv"
           onChange={handleFileSelect}
+          disabled={uploading}
           style={{ display: 'none' }}
           id="file-upload-input"
         />
@@ -258,10 +288,25 @@ export default function UploadPage() {
 
           {/* Preview button */}
           {report.success && !preview && (
-            <button className="btn btn-secondary preview-btn animate-fadeInUp stagger-4" onClick={loadPreview}>
-              <Eye size={16} />
-              Preview Clean Data
+            <button
+              className="btn btn-secondary preview-btn animate-fadeInUp stagger-4"
+              type="button"
+              onClick={loadPreview}
+              disabled={previewLoading}
+            >
+              {previewLoading ? <Loader2 size={16} className="animate-spin" /> : <Eye size={16} />}
+              {previewLoading ? 'Loading Preview' : 'Preview Clean Data'}
             </button>
+          )}
+
+          {previewError && (
+            <div className="upload-error card animate-fadeInUp">
+              <AlertTriangle size={18} />
+              <div>
+                <strong>Preview failed</strong>
+                <p>{previewError}</p>
+              </div>
+            </div>
           )}
 
           {/* Data Preview */}

@@ -6,11 +6,20 @@ Run with:
     uvicorn app.main:app --reload --port 8000
 """
 
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import ingestion, analysis
+from app.routers import ingestion, analysis, semantic
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("textlens.api")
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
@@ -35,9 +44,23 @@ app.add_middleware(
 
 app.include_router(ingestion.router)
 app.include_router(analysis.router)
+app.include_router(semantic.router)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info("Request started %s %s", request.method, request.url.path)
+    response = await call_next(request)
+    logger.info(
+        "Request completed %s %s status=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+    )
+    return response
+
 
 @app.get("/api/health")
 async def health():

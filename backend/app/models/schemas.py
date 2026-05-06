@@ -92,6 +92,12 @@ class DatasetMeta(BaseModel):
     clean_csv_path: str = ""     # path to the cleaned file
     report_json_path: str = ""   # path to the persisted ingestion report
     analysis_path: str = ""      # path to the analysis results JSON
+    embedding_status: Optional[str] = None
+    embedding_model: Optional[str] = None
+    embedding_dimension: Optional[int] = None
+    embedding_count: int = 0
+    embedding_index_name: Optional[str] = None
+    embedded_at: Optional[datetime] = None
     error: Optional[str] = None
 
 
@@ -112,3 +118,54 @@ class DatasetPreviewResponse(BaseModel):
 class UploadResponse(BaseModel):
     dataset_id: str
     report: IngestionReportSchema
+
+
+# Semantic Search + QA
+
+class EmbedRequest(BaseModel):
+    dataset_id: str
+
+
+class EmbedResponse(BaseModel):
+    status: str = "success"
+    message: str
+    embedding_status: str
+    dataset_id: str
+    embedded_count: int
+    skipped_existing: int = 0
+    dimension: int
+    index_name: str
+    namespace: str
+    model: str
+
+
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    dataset_id: Optional[str] = None
+
+
+class SearchResult(BaseModel):
+    id: str
+    text: str
+    metadata: dict[str, Any]
+    score: float
+
+
+class SearchResponse(BaseModel):
+    dataset_id: str
+    query: str
+    top_k: int
+    results: list[SearchResult]
+
+
+class QARequest(BaseModel):
+    dataset_id: str
+    question: str
+    top_k: int = 5
+
+
+class QAResponse(BaseModel):
+    answer: str
+    supporting_rows: list[SearchResult]
+    mode: str

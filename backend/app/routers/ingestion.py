@@ -1,7 +1,8 @@
 """
-Ingestion router — file upload, dataset listing, and preview endpoints.
+Ingestion router - file upload, dataset listing, and preview endpoints.
 """
 
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -34,6 +35,7 @@ from ingestion.config import IngestionConfig
 from ingestion.pipeline import ingest
 
 router = APIRouter(prefix="/api", tags=["ingestion"])
+logger = logging.getLogger(__name__)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -99,6 +101,7 @@ async def upload_file(
     Upload a file, run the ingestion pipeline, and return a structured report.
     Currently supports CSV files.
     """
+    logger.info("Upload requested for filename=%s text_column=%s", file.filename, text_column)
     # Validate file type
     allowed_extensions = {".csv"}
     ext = Path(file.filename).suffix.lower()
@@ -111,6 +114,7 @@ async def upload_file(
     # Save uploaded file to disk
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     dataset_meta = create_dataset(file.filename, "")
+    logger.info("Created dataset registry entry dataset_id=%s", dataset_meta.id)
 
     upload_path = os.path.join(settings.UPLOAD_DIR, f"{dataset_meta.id}_{file.filename}")
     with open(upload_path, "wb") as f:
@@ -138,9 +142,21 @@ async def upload_file(
         "text_column": report.text_column.column_name if report.text_column else None,
         "clean_csv_path": report.clean_csv_path or "",
         "report_json_path": report.report_json_path or "",
+        "embedding_status": "not_started" if report.success else None,
+        "embedding_model": None,
+        "embedding_dimension": None,
+        "embedding_count": 0,
+        "embedding_index_name": None,
+        "embedded_at": None,
         "error": report.error,
     }
     update_dataset(dataset_meta.id, **update_fields)
+    logger.info(
+        "Upload pipeline finished for dataset_id=%s success=%s clean_rows=%s",
+        dataset_meta.id,
+        report.success,
+        report.stats.clean_count if report.stats else 0,
+    )
 
     report_schema = _report_to_schema(report, file.filename)
 

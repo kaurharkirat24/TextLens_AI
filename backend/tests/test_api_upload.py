@@ -60,6 +60,7 @@ def test_upload_csv_returns_report_and_preview(monkeypatch):
     dataset = datasets_response.json()["datasets"][0]
     assert dataset["id"] == payload["dataset_id"]
     assert dataset["status"] == "ingested"
+    assert dataset["embedding_status"] == "not_started"
     assert Path(dataset["clean_csv_path"]).exists()
     assert Path(dataset["report_json_path"]).exists()
 
@@ -80,6 +81,13 @@ def test_upload_csv_returns_report_and_preview(monkeypatch):
     assert analysis["cleaning_report"]["cleaning_status"] in {"cleaned", "already_clean"}
     assert analysis["clean_dataset_path"]
     assert len(analysis["charts"]) <= 8
+
+    datasets_after_analysis = client.get("/api/datasets")
+    assert datasets_after_analysis.status_code == 200
+    analyzed_dataset = datasets_after_analysis.json()["datasets"][0]
+    assert analyzed_dataset["status"] == "analyzed"
+    assert analyzed_dataset["embedding_status"] == "not_started"
+    assert analyzed_dataset["embedding_count"] == 0
 
     download_response = client.get(f"/api/download/clean-dataset/{payload['dataset_id']}")
     assert download_response.status_code == 200
