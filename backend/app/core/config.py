@@ -43,14 +43,22 @@ class Settings:
     DATA_DIR: str = str(_PROJECT_ROOT / "data")
 
     CORS_ORIGINS: list[str] = [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
     ]
+
+    # Log the origins on startup to help debug CORS issues
+    if not os.getenv("PYTEST_CURRENT_TEST"):
+        print(f"INFO:  CORS Origins: {CORS_ORIGINS}")
 
     MAX_NULL_RATIO: float = 0.30
     MIN_TEXT_LENGTH: int = 3
     MAX_TEXT_LENGTH: int = 10_000
+    MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
 
     PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "")
     PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "textlens-ai")

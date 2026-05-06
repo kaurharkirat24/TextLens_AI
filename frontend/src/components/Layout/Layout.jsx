@@ -1,8 +1,10 @@
+import { useState, useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import {
   Upload, LayoutDashboard, MessageSquareText,
   FileText, Sparkles, Activity
 } from 'lucide-react';
+import { checkHealth } from '../../services/api';
 import './Layout.css';
 
 const NAV_ITEMS = [
@@ -13,6 +15,25 @@ const NAV_ITEMS = [
 ];
 
 export default function Layout() {
+  const [isConnected, setIsConnected] = useState(true);
+
+  useEffect(() => {
+    let interval;
+    const check = async () => {
+      try {
+        await checkHealth();
+        setIsConnected(true);
+      } catch (err) {
+        setIsConnected(false);
+      }
+    };
+
+    check();
+    interval = setInterval(check, 10000); // Check every 10s
+
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="layout">
       {/* ── Sidebar ─────────────────────────────────────────────── */}
@@ -44,8 +65,11 @@ export default function Layout() {
 
         <div className="sidebar-footer">
           <div className="sidebar-status">
-            <Activity size={14} className="sidebar-status-dot" />
-            <span>API Connected</span>
+            <Activity
+              size={14}
+              className={`sidebar-status-dot ${!isConnected ? 'sidebar-status-dot--disconnected' : ''}`}
+            />
+            <span>{isConnected ? 'API Connected' : 'API Disconnected'}</span>
           </div>
         </div>
       </aside>

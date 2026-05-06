@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import ingestion, analysis, semantic
+from app.routers import ingestion, analysis, semantic, system
 
 
 logging.basicConfig(
@@ -45,6 +45,7 @@ app.add_middleware(
 app.include_router(ingestion.router)
 app.include_router(analysis.router)
 app.include_router(semantic.router)
+app.include_router(system.router)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -65,3 +66,7 @@ async def log_requests(request: Request, call_next):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "textlens-ai"}
+
+# Initialize DB at module load (simpler for now if startup event fails)
+from app.core.database import init_db
+init_db()

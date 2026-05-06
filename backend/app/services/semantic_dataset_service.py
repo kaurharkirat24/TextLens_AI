@@ -27,6 +27,9 @@ def load_semantic_dataset(dataset_id: str) -> tuple[DatasetMeta, pd.DataFrame, d
     if not meta.clean_csv_path or not os.path.exists(meta.clean_csv_path):
         raise SemanticDatasetError("Clean dataset not found. Run ingestion/analysis before embedding.")
 
+    if meta.status not in ("analyzed", "embedded"):
+        raise SemanticDatasetError("Dataset must be analyzed before embedding.")
+
     try:
         df = pd.read_csv(meta.clean_csv_path)
     except Exception as exc:
@@ -117,6 +120,16 @@ def mark_embedding_completed(
 
 def mark_embedding_failed(dataset_id: str, error: str) -> None:
     update_dataset(dataset_id, embedding_status="failed", error=error)
+
+
+def mark_embedding_progress(dataset_id: str, progress: float) -> None:
+    """Update embedding progress (0.0 to 1.0)."""
+    update_dataset(dataset_id, embedding_progress=round(progress, 3))
+
+
+def mark_embedding_started(dataset_id: str) -> None:
+    """Set initial processing state."""
+    update_dataset(dataset_id, embedding_status="processing", embedding_progress=0.0)
 
 
 def _load_analysis(meta: DatasetMeta, dataset_id: str) -> dict[str, Any]:

@@ -130,6 +130,11 @@
   animation: pulse 2s ease-in-out infinite;
 }
 
+.sidebar-status-dot--disconnected {
+  color: var(--color-error);
+  animation: none;
+}
+
 
 /* ── Main Content ───────────────────────────────────────────────────────── */
 

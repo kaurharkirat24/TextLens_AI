@@ -1,41 +1,17 @@
 """
-Dataset manager — tracks uploaded datasets using a JSON-based registry.
-
-Stores metadata in  uploads/registry.json  so we can list, fetch, and
-update dataset records without a full database for the MVP.
+Dataset manager — tracks uploaded datasets using SQLite.
 """
 
-import json
-import os
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
-from app.core.config import settings
+from app.core.database import get_db
 from app.models.schemas import DatasetMeta, DatasetStatus
 
 
-REGISTRY_PATH = os.path.join(settings.UPLOAD_DIR, "registry.json")
-
-
-def _load_registry() -> list[dict]:
-    """Load the registry from disk, returning an empty list if missing."""
-    if not os.path.exists(REGISTRY_PATH):
-        return []
-    with open(REGISTRY_PATH, "r") as f:
-        return json.load(f)
-
-
-def _save_registry(records: list[dict]) -> None:
-    """Persist the registry to disk."""
-    os.makedirs(os.path.dirname(REGISTRY_PATH), exist_ok=True)
-    with open(REGISTRY_PATH, "w") as f:
-        json.dump(records, f, indent=2, default=str)
-
-
 def create_dataset(original_filename: str, file_path: str) -> DatasetMeta:
-    """Register a new dataset and return its metadata."""
+    """Register a new dataset in SQLite and return its metadata."""
     meta = DatasetMeta(
         id=uuid.uuid4().hex[:12],
         original_filename=original_filename,
@@ -43,35 +19,62 @@ def create_dataset(original_filename: str, file_path: str) -> DatasetMeta:
         status=DatasetStatus.UPLOADED,
         file_path=file_path,
     )
-    records = _load_registry()
-    records.append(meta.model_dump(mode="json"))
-    _save_registry(records)
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO datasets (id, original_filename, uploaded_at, status, file_path)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                meta.id,
+                meta.original_filename,
+                meta.uploaded_at.isoformat(),
+                meta.status.value,
+                meta.file_path,
+            ),
+        )
+        conn.commit()
     return meta
 
 
 def get_dataset(dataset_id: str) -> Optional[DatasetMeta]:
-    """Fetch a single dataset by ID, or None if not found."""
-    for record in _load_registry():
-        if record["id"] == dataset_id:
-            return DatasetMeta(**record)
+    """Fetch a single dataset from SQLite by ID, or None if not found."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM datasets WHERE id = ?", (dataset_id,)).fetchone()
+        if row:
+            return DatasetMeta(**dict(row))
     return None
 
 
 def list_datasets() -> list[DatasetMeta]:
-    """Return all datasets, newest first."""
-    records = _load_registry()
-    metas = [DatasetMeta(**r) for r in records]
-    metas.sort(key=lambda m: m.uploaded_at, reverse=True)
-    return metas
+    """Return all datasets from SQLite, newest first."""
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM datasets ORDER BY uploaded_at DESC").fetchall()
+        return [DatasetMeta(**dict(row)) for row in rows]
 
 
 def update_dataset(dataset_id: str, **fields) -> Optional[DatasetMeta]:
-    """Update specific fields on a dataset record."""
-    records = _load_registry()
-    for i, record in enumerate(records):
-        if record["id"] == dataset_id:
-            record.update(fields)
-            records[i] = record
-            _save_registry(records)
-            return DatasetMeta(**record)
-    return None
+    """Update specific fields on a dataset record in SQLite."""
+    if not fields:
+        return get_dataset(dataset_id)
+
+    # Handle enums and datetimes for SQLite
+    processed_fields = {}
+    for k, v in fields.items():
+        if hasattr(v, "value"):  # Enum
+            processed_fields[k] = v.value
+        elif hasattr(v, "isoformat"):  # datetime
+            processed_fields[k] = v.isoformat()
+        else:
+            processed_fields[k] = v
+
+    set_clause = ", ".join([f"{k} = ?" for k in processed_fields.keys()])
+    values = list(processed_fields.values())
+    values.append(dataset_id)
+
+    with get_db() as conn:
+        conn.execute(f"UPDATE datasets SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+
+    return get_dataset(dataset_id)

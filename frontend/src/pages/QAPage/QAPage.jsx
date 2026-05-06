@@ -53,6 +53,33 @@ export default function QAPage() {
     logger(`[TextLens Phase 3] ${message}`, details || '');
   }, []);
 
+  const selectedDataset = useMemo(
+    () => datasets.find((dataset) => dataset.id === selectedId),
+    [datasets, selectedId],
+  );
+
+  const displayStatus = embedResult?.embedding_status || selectedDataset?.embedding_status || 'not_started';
+  const displayDimension = embedResult?.dimension || selectedDataset?.embedding_dimension;
+  const displayModel = embedResult?.model || selectedDataset?.embedding_model;
+  const displayIndex = embedResult?.index_name || selectedDataset?.embedding_index_name || 'textlens-ai';
+  const displayCount = embedResult
+    ? (embedResult.embedded_count || 0) + (embedResult.skipped_existing || 0)
+    : selectedDataset?.embedding_count || 0;
+  const displayProgress = embedResult?.embedding_progress ?? selectedDataset?.embedding_progress ?? 0;
+  const canUseSemantic = Boolean(selectedId && displayStatus === 'completed');
+
+  const refreshDatasets = useCallback(async () => {
+    setLoadingDatasets(true);
+    try {
+      const payload = await getDatasets();
+      const available = (payload.datasets || []).filter((dataset) => dataset.status !== 'failed');
+      setDatasets(available);
+      return available.find((dataset) => dataset.id === selectedId);
+    } finally {
+      setLoadingDatasets(false);
+    }
+  }, [selectedId]);
+
   useEffect(() => {
     let active = true;
 
@@ -87,31 +114,28 @@ export default function QAPage() {
     };
   }, [addLog]);
 
-  const selectedDataset = useMemo(
-    () => datasets.find((dataset) => dataset.id === selectedId),
-    [datasets, selectedId],
-  );
+  // --- Background Polling for Embedding ---
+  useEffect(() => {
+    if (displayStatus !== 'processing' || !selectedId) return;
 
-  const displayStatus = embedResult?.embedding_status || selectedDataset?.embedding_status || 'not_started';
-  const displayDimension = embedResult?.dimension || selectedDataset?.embedding_dimension;
-  const displayModel = embedResult?.model || selectedDataset?.embedding_model;
-  const displayIndex = embedResult?.index_name || selectedDataset?.embedding_index_name || 'textlens-ai';
-  const displayCount = embedResult
-    ? (embedResult.embedded_count || 0) + (embedResult.skipped_existing || 0)
-    : selectedDataset?.embedding_count || 0;
-  const canUseSemantic = Boolean(selectedId && displayStatus === 'completed');
+    let active = true;
+    const interval = setInterval(async () => {
+      try {
+        const updated = await refreshDatasets();
+        if (active && updated?.embedding_status === 'completed') {
+          addLog('success', 'Background embedding completed successfully');
+          clearInterval(interval);
+        }
+      } catch (err) {
+        console.error('Polling failed', err);
+      }
+    }, 3000);
 
-  const refreshDatasets = useCallback(async () => {
-    setLoadingDatasets(true);
-    try {
-      const payload = await getDatasets();
-      const available = (payload.datasets || []).filter((dataset) => dataset.status !== 'failed');
-      setDatasets(available);
-      return available.find((dataset) => dataset.id === selectedId);
-    } finally {
-      setLoadingDatasets(false);
-    }
-  }, [selectedId]);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [displayStatus, selectedId, refreshDatasets, addLog]);
 
   const handleDatasetChange = (datasetId) => {
     setSelectedId(datasetId);
@@ -288,10 +312,20 @@ export default function QAPage() {
           </div>
         </label>
 
-        <button className="btn btn-primary" type="button" onClick={runEmbedding} disabled={!selectedId || embedding}>
-          {embedding ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-          Embed
-        </button>
+        <div className="qa-embed-action-group">
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={runEmbedding}
+            disabled={!selectedId || embedding || (selectedDataset?.status !== 'analyzed' && selectedDataset?.status !== 'embedded')}
+          >
+            {embedding ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+            Embed
+          </button>
+          {selectedId && selectedDataset?.status !== 'analyzed' && selectedDataset?.status !== 'embedded' && (
+            <span className="qa-hint">Analyze in Dashboard first</span>
+          )}
+        </div>
       </section>
 
       {error && (
@@ -302,7 +336,12 @@ export default function QAPage() {
       )}
 
       <section className="qa-status-grid">
-        <StatusTile icon={ShieldCheck} label="Embedding" value={formatStatus(displayStatus)} tone={statusTone(displayStatus)} />
+        <StatusTile 
+          icon={ShieldCheck} 
+          label="Embedding" 
+          value={displayStatus === 'processing' ? `${Math.round(displayProgress * 100)}%` : formatStatus(displayStatus)} 
+          tone={statusTone(displayStatus)} 
+        />
         <StatusTile icon={Cpu} label="Dimension" value={displayDimension || 'Pending'} tone={displayDimension ? 'info' : 'muted'} />
         <StatusTile icon={Zap} label="Model" value={displayModel || 'Configured in API'} tone="info" />
         <StatusTile icon={Database} label="Index" value={displayIndex} tone="info" />
@@ -496,6 +535,7 @@ function formatStatus(status) {
 
 function statusTone(status) {
   if (status === 'completed') return 'success';
+  if (status === 'processing') return 'info';
   if (status === 'failed') return 'error';
   return 'muted';
 }

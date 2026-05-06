@@ -4,6 +4,7 @@ Ingestion router - file upload, dataset listing, and preview endpoints.
 
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -39,6 +40,22 @@ logger = logging.getLogger(__name__)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename by keeping only alphanumeric, dots, dashes and underscores.
+    """
+    path = Path(filename)
+    name = path.stem
+    ext = path.suffix.lower()
+    # Remove everything except alphanumeric, dots, dashes, underscores
+    clean_name = re.sub(r'[^a-zA-Z0-9._-]', '_', name)
+    # Ensure it's not too long and doesn't start with dots/dashes
+    clean_name = clean_name.strip('._-')
+    if not clean_name:
+        clean_name = "dataset"
+    return f"{clean_name[:100]}{ext}"
+
 
 def _report_to_schema(report, filename: str) -> IngestionReportSchema:
     """Convert the dataclass-based IngestionReport → Pydantic schema."""
@@ -111,12 +128,26 @@ async def upload_file(
             detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(allowed_extensions)}",
         )
 
+    # Enforce file size limit
+    file.file.seek(0, os.SEEK_END)
+    file_size = file.file.tell()
+    file.file.seek(0)
+
+    if file_size > settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB}MB.",
+        )
+
+    # Sanitize filename
+    safe_name = sanitize_filename(file.filename)
+
     # Save uploaded file to disk
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     dataset_meta = create_dataset(file.filename, "")
     logger.info("Created dataset registry entry dataset_id=%s", dataset_meta.id)
 
-    upload_path = os.path.join(settings.UPLOAD_DIR, f"{dataset_meta.id}_{file.filename}")
+    upload_path = os.path.join(settings.UPLOAD_DIR, f"{dataset_meta.id}_{safe_name}")
     with open(upload_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 

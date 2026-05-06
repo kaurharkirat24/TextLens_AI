@@ -201,7 +201,10 @@ def clean_dataframe(df: pd.DataFrame, schema: dict[str, ColumnType]) -> tuple[pd
             clean[col] = parsed
 
     before = len(clean)
-    clean = clean.drop_duplicates()
+    # Exclude protected columns from duplicate check to ensure we catch content-level duplicates
+    protected = ["original_row_index", "duplicate_frequency"]
+    subset = [col for col in clean.columns if col not in protected]
+    clean = clean.drop_duplicates(subset=subset if subset else None, keep="first")
     duplicate_rows_removed = before - len(clean)
 
     rows_removed = original_rows - len(clean)

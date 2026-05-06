@@ -11,7 +11,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ class DatasetStatus(str, Enum):
     INGESTED = "ingested"
     PREPROCESSED = "preprocessed"
     ANALYZED = "analyzed"
+    PROCESSING = "processing"
     EMBEDDED = "embedded"
     FAILED = "failed"
 
@@ -37,7 +38,7 @@ class ColumnDetectionSchema(BaseModel):
     column_name: str
     method: str
     confidence: str
-    candidates: list[str] = []
+    candidates: list[str] = Field(default_factory=list)
     reasoning: str = ""
 
 
@@ -73,7 +74,7 @@ class IngestionReportSchema(BaseModel):
     file_name: str
     text_column: Optional[ColumnDetectionSchema] = None
     stats: Optional[DatasetStatsSchema] = None
-    issues: list[ValidationIssueSchema] = []
+    issues: list[ValidationIssueSchema] = Field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -88,21 +89,22 @@ class DatasetMeta(BaseModel):
     text_column: Optional[str] = None
     total_rows: int = 0
     clean_rows: int = 0
-    file_path: str = ""          # path to the uploaded file
-    clean_csv_path: str = ""     # path to the cleaned file
-    report_json_path: str = ""   # path to the persisted ingestion report
-    analysis_path: str = ""      # path to the analysis results JSON
+    file_path: Optional[str] = ""          # path to the uploaded file
+    clean_csv_path: Optional[str] = ""     # path to the cleaned file
+    report_json_path: Optional[str] = ""   # path to the persisted ingestion report
+    analysis_path: Optional[str] = ""      # path to the analysis results JSON
     embedding_status: Optional[str] = None
     embedding_model: Optional[str] = None
     embedding_dimension: Optional[int] = None
     embedding_count: int = 0
     embedding_index_name: Optional[str] = None
     embedded_at: Optional[datetime] = None
+    embedding_progress: float = 0.0      # 0.0 to 1.0
     error: Optional[str] = None
 
 
 class DatasetListResponse(BaseModel):
-    datasets: list[DatasetMeta] = []
+    datasets: list[DatasetMeta] = Field(default_factory=list)
     total: int = 0
 
 
@@ -137,6 +139,7 @@ class EmbedResponse(BaseModel):
     index_name: str
     namespace: str
     model: str
+    embedding_progress: float = 0.0
 
 
 class SearchRequest(BaseModel):

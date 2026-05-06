@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from app.core.config import settings
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from app.models.schemas import (
     EmbedRequest,
@@ -33,67 +34,110 @@ router = APIRouter(prefix="/api", tags=["semantic"])
 
 
 @router.post("/datasets/{dataset_id}/embed", response_model=EmbedResponse)
-async def embed_dataset(dataset_id: str):
+async def embed_dataset(dataset_id: str, background_tasks: BackgroundTasks):
     """Embed the cleaned dataset primary_text column into Pinecone."""
-    return await _embed_dataset(dataset_id)
+    return await _start_embedding_job(dataset_id, background_tasks)
 
 
 @router.post("/embed", response_model=EmbedResponse)
-async def embed_dataset_contract(request: EmbedRequest):
+async def embed_dataset_contract(request: EmbedRequest, background_tasks: BackgroundTasks):
     """Contract-first embedding endpoint used by the frontend."""
     dataset_id = request.dataset_id.strip()
     if not dataset_id:
         raise HTTPException(status_code=400, detail="dataset_id is required")
-    return await _embed_dataset(dataset_id)
+    return await _start_embedding_job(dataset_id, background_tasks)
 
 
-async def _embed_dataset(dataset_id: str) -> EmbedResponse:
-    """Embed one dataset namespace, overwriting stale vectors when the model changes."""
-    logger.info("Embedding requested for dataset_id=%s", dataset_id)
+async def _start_embedding_job(dataset_id: str, background_tasks: BackgroundTasks) -> EmbedResponse:
+    """Validate prerequisites and queue the embedding job."""
     embedding_service = OllamaEmbeddingService()
     vector_store = PineconeVectorStore()
 
     try:
         meta, df, analysis = load_semantic_dataset(dataset_id)
-        primary_text = get_primary_text_column(meta, df, analysis)
-        text_rows = extract_text_rows(df, primary_text)
-        vector_ids = [f"{dataset_id}_{row_id}" for row_id, _ in text_rows]
-        sample_dimension = len(embedding_service.embed_query(text_rows[0][1]))
-        live_dimension = vector_store.describe_dimension()
-        if live_dimension and live_dimension != sample_dimension:
-            raise VectorStoreError(
-                f"Existing Pinecone index dimension {live_dimension} does not match "
-                f"Ollama embedding dimension {sample_dimension} for model {embedding_service.model}"
-            )
-        dimension = sample_dimension
-        vector_store.ensure_index(dimension)
-
+        
+        # Immediate check: Is it already done?
         if (
             meta.embedding_status == "completed"
             and meta.embedding_model == embedding_service.model
             and meta.embedding_index_name == vector_store.index_name
-            and meta.embedding_count >= len(text_rows)
-            and meta.embedding_dimension == dimension
         ):
             return EmbedResponse(
                 status="success",
-                message="Embeddings already completed for this dataset.",
+                message="Embeddings already completed.",
                 dataset_id=dataset_id,
                 embedding_status="completed",
-                embedded_count=0,
-                skipped_existing=len(text_rows),
-                dimension=dimension,
+                embedded_count=meta.embedding_count,
+                dimension=meta.embedding_dimension or 0,
                 index_name=vector_store.index_name,
                 namespace=dataset_id,
                 model=embedding_service.model,
             )
 
-        same_embedding_contract = (
-            meta.embedding_model == embedding_service.model
-            and meta.embedding_index_name == vector_store.index_name
-            and meta.embedding_dimension == dimension
+        # Check if already processing
+        if meta.embedding_status == "processing":
+             return EmbedResponse(
+                status="success",
+                message="Embedding job is already in progress.",
+                dataset_id=dataset_id,
+                embedding_status="processing",
+                embedded_count=meta.embedding_count,
+                dimension=meta.embedding_dimension or 0,
+                index_name=vector_store.index_name,
+                namespace=dataset_id,
+                model=embedding_service.model,
+            )
+
+        # Start background job
+        from app.services.semantic_dataset_service import mark_embedding_started
+        mark_embedding_started(dataset_id)
+        
+        background_tasks.add_task(run_background_embedding, dataset_id)
+
+        return EmbedResponse(
+            status="success",
+            message="Embedding job started in background.",
+            dataset_id=dataset_id,
+            embedding_status="processing",
+            embedded_count=0,
+            dimension=0,
+            index_name=vector_store.index_name,
+            namespace=dataset_id,
+            model=embedding_service.model,
         )
-        existing_ids = vector_store.existing_ids(vector_ids, namespace=dataset_id) if same_embedding_contract else set()
+    except SemanticDatasetError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to start embedding job")
+        raise HTTPException(status_code=500, detail=f"Failed to start job: {exc}") from exc
+
+
+async def run_background_embedding(dataset_id: str):
+    """Long-running background task to embed and upsert vectors in batches."""
+    logger.info("Background embedding job started for %s", dataset_id)
+    embedding_service = OllamaEmbeddingService()
+    vector_store = PineconeVectorStore()
+
+    try:
+        from app.services.semantic_dataset_service import (
+            mark_embedding_progress,
+            mark_embedding_started,
+        )
+        
+        meta, df, analysis = load_semantic_dataset(dataset_id)
+        primary_text = get_primary_text_column(meta, df, analysis)
+        text_rows = extract_text_rows(df, primary_text)
+        total_rows = len(text_rows)
+
+        # Dimension validation (using first row)
+        sample_embedding = embedding_service.embed_query(text_rows[0][1])
+        dimension = len(sample_embedding)
+        vector_store.ensure_index(dimension)
+
+        # Check existing to skip work
+        vector_ids = [f"{dataset_id}_{row_id}" for row_id, _ in text_rows]
+        existing_ids = vector_store.existing_ids(vector_ids, namespace=dataset_id)
+        
         rows_to_embed = [
             (row_id, text)
             for row_id, text in text_rows
@@ -105,56 +149,43 @@ async def _embed_dataset(dataset_id: str) -> EmbedResponse:
                 dataset_id,
                 model=embedding_service.model,
                 dimension=dimension,
-                count=len(text_rows),
+                count=total_rows,
                 index_name=vector_store.index_name,
             )
-            return EmbedResponse(
-                status="success",
-                message="Embeddings already completed for this dataset.",
-                dataset_id=dataset_id,
-                embedding_status="completed",
-                embedded_count=0,
-                skipped_existing=len(text_rows),
-                dimension=dimension,
-                index_name=vector_store.index_name,
-                namespace=dataset_id,
-                model=embedding_service.model,
-            )
+            return
 
-        texts = [text for _, text in rows_to_embed]
-        embeddings = embedding_service.embed_texts(texts)
-        if len(embeddings) != len(texts):
-            raise EmbeddingServiceError("Embedding count does not match text count")
-        if any(len(vector) != dimension for vector in embeddings):
-            raise EmbeddingServiceError("Embedding dimension mismatch detected")
+        # Process in batches
+        from app.services.embedding_service import _batches
+        batch_size = settings.EMBEDDING_BATCH_SIZE
+        processed_count = len(existing_ids)
 
-        vectors = []
-        for (row_id, text), embedding in zip(rows_to_embed, embeddings):
-            metadata = build_metadata(dataset_id, row_id, text, df.iloc[row_id], analysis)
-            vectors.append((f"{dataset_id}_{row_id}", embedding, metadata))
+        for i, batch in enumerate(_batches(rows_to_embed, batch_size)):
+            batch_texts = [text for _, text in batch]
+            batch_embeddings = embedding_service.embed_texts(batch_texts)
+            
+            vectors = []
+            for (row_id, text), emb in zip(batch, batch_embeddings):
+                metadata = build_metadata(dataset_id, row_id, text, df.iloc[row_id], analysis)
+                vectors.append((f"{dataset_id}_{row_id}", emb, metadata))
+            
+            vector_store.upsert_vectors(vectors, namespace=dataset_id)
+            
+            processed_count += len(batch)
+            mark_embedding_progress(dataset_id, processed_count / total_rows)
+            logger.info("Dataset %s embedding progress: %.1f%%", dataset_id, (processed_count/total_rows)*100)
 
-        upserted = vector_store.upsert_vectors(vectors, namespace=dataset_id)
-        total_embedded = len(existing_ids) + upserted
         mark_embedding_completed(
             dataset_id,
             model=embedding_service.model,
             dimension=dimension,
-            count=total_embedded,
+            count=total_rows,
             index_name=vector_store.index_name,
         )
+        logger.info("Background embedding job completed for %s", dataset_id)
 
-        return EmbedResponse(
-            status="success",
-            message=f"Generated embeddings for {upserted} rows.",
-            dataset_id=dataset_id,
-            embedding_status="completed",
-            embedded_count=upserted,
-            skipped_existing=len(existing_ids),
-            dimension=dimension,
-            index_name=vector_store.index_name,
-            namespace=dataset_id,
-            model=embedding_service.model,
-        )
+    except Exception as exc:
+        logger.exception("Background embedding job failed for %s", dataset_id)
+        mark_embedding_failed(dataset_id, str(exc))
     except SemanticDatasetError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (EmbeddingServiceError, VectorStoreError) as exc:

@@ -1,15 +1,19 @@
+import os
 import requests
+from dotenv import load_dotenv
 from pinecone import Pinecone
+
+load_dotenv()
 
 # =========================
 # CONFIG
 # =========================
 
-PINECONE_API_KEY = "pcsk_JoH5v_NetMMNbQPwUyNLarWNLiSobp3fAEvGHA1AwyUjnZPdNZAM61f6xEPbKczFuzbaz"
-INDEX_NAME = "lolo"
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
+INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "textlens-ai")
 
-OLLAMA_URL = "http://localhost:11434/api/embeddings"
-MODEL_NAME = "qwen3-embedding:0.6b"
+OLLAMA_URL = f"{os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')}/api/embeddings"
+MODEL_NAME = os.getenv("OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
 
 TEXT = "This is a test document from Ollama to Pinecone."
 
