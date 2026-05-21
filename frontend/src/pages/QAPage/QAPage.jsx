@@ -58,14 +58,14 @@ export default function QAPage() {
     [datasets, selectedId],
   );
 
-  const displayStatus = embedResult?.embedding_status || selectedDataset?.embedding_status || 'not_started';
-  const displayDimension = embedResult?.dimension || selectedDataset?.embedding_dimension;
-  const displayModel = embedResult?.model || selectedDataset?.embedding_model;
-  const displayIndex = embedResult?.index_name || selectedDataset?.embedding_index_name || 'textlens-ai';
+  const displayStatus = selectedDataset?.embedding_status || embedResult?.embedding_status || 'not_started';
+  const displayDimension = selectedDataset?.embedding_dimension || embedResult?.dimension;
+  const displayModel = selectedDataset?.embedding_model || embedResult?.model;
+  const displayIndex = selectedDataset?.embedding_index_name || embedResult?.index_name || 'textlens-ai';
   const displayCount = embedResult
-    ? (embedResult.embedded_count || 0) + (embedResult.skipped_existing || 0)
+    ? selectedDataset?.embedding_count || (embedResult.embedded_count || 0) + (embedResult.skipped_existing || 0)
     : selectedDataset?.embedding_count || 0;
-  const displayProgress = embedResult?.embedding_progress ?? selectedDataset?.embedding_progress ?? 0;
+  const displayProgress = selectedDataset?.embedding_progress ?? embedResult?.embedding_progress ?? 0;
   const canUseSemantic = Boolean(selectedId && displayStatus === 'completed');
 
   const refreshDatasets = useCallback(async () => {
@@ -180,7 +180,7 @@ export default function QAPage() {
       setQaResult(null);
       await refreshDatasets();
 
-      addLog('success', result.message || 'Embedding completed with dimension safety checks', {
+      addLog('success', result.message || 'Embedding job accepted', {
         elapsed_ms: elapsedMs,
         dimension: result.dimension,
         embedded_count: result.embedded_count,

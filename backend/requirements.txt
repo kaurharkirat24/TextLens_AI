@@ -9,6 +9,11 @@ pandas
 numpy
 rich
 python-dotenv
+sentence-transformers
+google-genai
+pyarrow
+fastparquet
+nltk
 
 # Testing
 pytest

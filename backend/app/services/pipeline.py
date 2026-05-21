@@ -103,15 +103,8 @@ def save_clean_dataset(
     path = os.path.join(output_dir, f"clean_{stem}.csv")
     output_df = cleaned_df
 
-    # Always preserve metadata columns from Phase 1 if they exist
-    protected_columns = ["original_row_index", "duplicate_frequency"]
-
     if columns:
         preserved = [column for column in columns if column in output_df.columns]
-        for col in protected_columns:
-            if col in output_df.columns and col not in preserved:
-                preserved.append(col)
-
         if preserved:
             output_df = output_df[preserved]
 

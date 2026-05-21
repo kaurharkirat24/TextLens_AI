@@ -16,6 +16,14 @@ async def get_system_status():
     status = {
         "directories": {},
         "pinecone": {"configured": False, "connected": False, "index_ready": False},
+        "embeddings": {
+            "provider": settings.EMBEDDING_PROVIDER,
+            "model": settings.EMBEDDING_MODEL_NAME,
+            "expected_dimension": 384 if settings.EMBEDDING_MODEL_NAME == "all-MiniLM-L6-v2" else None,
+            "query_embedding_provider": "sentence_transformer",
+            "gemini_embeddings_enabled": False,
+            "gemini_api_key_configured": bool(settings.GEMINI_API_KEY),
+        },
         "ollama": {"available": False, "models": []},
     }
 

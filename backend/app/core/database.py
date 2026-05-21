@@ -1,18 +1,19 @@
-import sqlite3
 import os
+import sqlite3
+
 from app.core.config import settings
 
-DB_PATH = os.path.join(settings.UPLOAD_DIR, "textlens.db")
 
-def get_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _db_path() -> str:
+    return os.path.join(settings.UPLOAD_DIR, "textlens.db")
 
-def init_db():
-    with get_db() as conn:
-        conn.execute("""
+
+DB_PATH = _db_path()
+
+
+def _initialize_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
             CREATE TABLE IF NOT EXISTS datasets (
                 id TEXT PRIMARY KEY,
                 original_filename TEXT NOT NULL,
@@ -34,12 +35,27 @@ def init_db():
                 embedding_progress REAL DEFAULT 0.0,
                 error TEXT
             )
-        """)
-        
-        # Migration: Add embedding_progress if missing
-        try:
-            conn.execute("ALTER TABLE datasets ADD COLUMN embedding_progress REAL DEFAULT 0.0")
-        except sqlite3.OperationalError:
-            pass # Already exists
-            
-        conn.commit()
+        """
+    )
+
+    # Migration: Add embedding_progress if missing.
+    try:
+        conn.execute("ALTER TABLE datasets ADD COLUMN embedding_progress REAL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass
+
+    conn.commit()
+
+
+def get_db():
+    db_path = _db_path()
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    _initialize_schema(conn)
+    return conn
+
+
+def init_db():
+    with get_db():
+        pass

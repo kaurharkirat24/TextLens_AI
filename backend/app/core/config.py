@@ -64,17 +64,50 @@ class Settings:
     PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "textlens-ai")
     PINECONE_REGION: str = os.getenv("PINECONE_REGION", "")
     PINECONE_CLOUD: str = os.getenv("PINECONE_CLOUD", "aws")
+    PINECONE_UPSERT_BATCH_SIZE: int = int(
+        os.getenv("PINECONE_UPSERT_BATCH_SIZE", os.getenv("VECTOR_UPSERT_BATCH_SIZE", "100"))
+    )
+    VECTOR_UPSERT_BATCH_SIZE: int = PINECONE_UPSERT_BATCH_SIZE
 
+    # Embedding settings
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "sentence_transformer").strip().lower()
+    EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+    EMBEDDING_BATCH_SIZE: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "128"))
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "qwen3-embedding:0.6b")
-    EMBEDDING_BATCH_SIZE: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "32"))
-    VECTOR_UPSERT_BATCH_SIZE: int = int(os.getenv("VECTOR_UPSERT_BATCH_SIZE", "100"))
+    OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", EMBEDDING_MODEL_NAME)
+    
+    # Chunking settings
+    CHUNK_SIZE_SENTENCES: int = int(os.getenv("CHUNK_SIZE_SENTENCES", "8"))
+    CHUNK_OVERLAP_SENTENCES: int = int(os.getenv("CHUNK_OVERLAP_SENTENCES", "1"))
+    MIN_CHUNK_WORDS: int = int(os.getenv("MIN_CHUNK_WORDS", "5"))
+    MAX_CHUNK_WORDS: int = int(os.getenv("MAX_CHUNK_WORDS", "180"))
+    CSV_READ_CHUNK_SIZE: int = int(os.getenv("CSV_READ_CHUNK_SIZE", "5000"))
+    EMBEDDING_CHECKPOINT_EVERY_BATCHES: int = int(os.getenv("EMBEDDING_CHECKPOINT_EVERY_BATCHES", "10"))
+    EMBEDDING_SAVE_VECTORS: bool = os.getenv("EMBEDDING_SAVE_VECTORS", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    RAG_MIN_RELEVANCE_SCORE: float = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0"))
 
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
-    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "phi3:latest")
+    # Structured Storage Paths
+    DATA_RAW_DIR: str = _resolve_runtime_dir("DATA_RAW_DIR", _PROJECT_ROOT / "data" / "raw", "data/raw")
+    DATA_CLEANED_DIR: str = _resolve_runtime_dir("DATA_CLEANED_DIR", _PROJECT_ROOT / "data" / "cleaned", "data/cleaned")
+    DATA_CHUNKS_DIR: str = _resolve_runtime_dir("DATA_CHUNKS_DIR", _PROJECT_ROOT / "data" / "chunks", "data/chunks")
+    DATA_EMBEDDINGS_DIR: str = _resolve_runtime_dir(
+        "DATA_EMBEDDINGS_DIR", _PROJECT_ROOT / "data" / "embeddings", "data/embeddings"
+    )
+    DATA_TEMP_DIR: str = _resolve_runtime_dir("DATA_TEMP_DIR", _PROJECT_ROOT / "data" / "temp", "data/temp")
+    LOGS_DIR: str = _resolve_runtime_dir("LOGS_DIR", _PROJECT_ROOT / "logs", "logs")
+
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini")
+    LLM_ENABLED: bool = os.getenv("LLM_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY", os.getenv("GEMINI_API_KEY", ""))
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-2.5-flash")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
-    LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
+    LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "5"))
 
 
 settings = Settings()

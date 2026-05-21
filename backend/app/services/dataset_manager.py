@@ -6,8 +6,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.models.schemas import DatasetMeta, DatasetStatus
+
+
+REGISTRY_PATH = f"{settings.UPLOAD_DIR}/registry.json"
 
 
 def create_dataset(original_filename: str, file_path: str) -> DatasetMeta:

@@ -45,6 +45,9 @@ STOPWORDS = {
 class QAService:
     """Answer questions from retrieved rows, using an LLM when configured."""
 
+    _gemini_client_cache = None
+    _gemini_client_key = ""
+
     def answer(self, question: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         supporting_rows = _supporting_rows(rows)
         try:
@@ -63,10 +66,12 @@ class QAService:
         }
 
     def _llm_answer(self, question: str, rows: list[dict[str, Any]]) -> str | None:
-        if not settings.LLM_PROVIDER:
+        if not settings.LLM_ENABLED or not settings.LLM_PROVIDER:
             return None
 
         provider = settings.LLM_PROVIDER.strip().lower()
+        if provider == "gemini":
+            return self._gemini_answer(question, rows)
         if provider != "ollama":
             logger.warning("Unsupported LLM provider '%s'; using fallback", settings.LLM_PROVIDER)
             return None
@@ -92,6 +97,43 @@ class QAService:
             return None
         content = (data.get("response") or "").strip()
         return content or None
+
+    def _gemini_answer(self, question: str, rows: list[dict[str, Any]]) -> str | None:
+        if not settings.LLM_API_KEY:
+            logger.warning("Missing Gemini API key for QA; using fallback")
+            return None
+
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError as exc:
+            raise RuntimeError("google-genai is not installed. Run 'pip install google-genai'") from exc
+
+        prompt = _build_prompt(question, rows)
+        client = self._gemini_client(genai)
+        start = time.perf_counter()
+        response = client.models.generate_content(
+            model=settings.LLM_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                system_instruction=(
+                    "You answer only from the supplied dataset rows. "
+                    "If the rows do not support an answer, say that the dataset evidence is insufficient. "
+                    "Cite row IDs when making claims."
+                ),
+            ),
+        )
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info("Gemini QA generation completed in %.1f ms", elapsed_ms)
+        content = (getattr(response, "text", "") or "").strip()
+        return content or None
+
+    def _gemini_client(self, genai_module):
+        if self._gemini_client_cache is None or self._gemini_client_key != settings.LLM_API_KEY:
+            self._gemini_client_cache = genai_module.Client(api_key=settings.LLM_API_KEY)
+            self._gemini_client_key = settings.LLM_API_KEY
+        return self._gemini_client_cache
 
     def _fallback_answer(self, question: str, rows: list[dict[str, Any]]) -> str:
         if not rows:
@@ -130,6 +172,7 @@ def _build_prompt(question: str, rows: list[dict[str, Any]]) -> str:
         "Instructions:\n"
         "- Answer clearly and concisely\n"
         "- Use ONLY the provided context\n"
+        "- Cite row IDs for concrete claims\n"
         "- Identify key patterns or trends"
     )
 
@@ -149,4 +192,3 @@ def _supporting_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _keywords(text: str) -> list[str]:
     words = re.findall(r"[a-zA-Z][a-zA-Z0-9_'-]{2,}", text.lower())
     return [word for word in words if word not in STOPWORDS]
-

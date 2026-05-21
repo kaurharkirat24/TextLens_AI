@@ -23,7 +23,7 @@ export default function Layout() {
       try {
         await checkHealth();
         setIsConnected(true);
-      } catch (err) {
+      } catch {
         setIsConnected(false);
       }
     };

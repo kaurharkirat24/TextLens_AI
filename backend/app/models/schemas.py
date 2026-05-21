@@ -142,6 +142,13 @@ class EmbedResponse(BaseModel):
     embedding_progress: float = 0.0
 
 
+class ExternalEmbeddingCompleteRequest(BaseModel):
+    model: str = "all-MiniLM-L6-v2"
+    dimension: int = 384
+    count: int
+    index_name: str
+
+
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
