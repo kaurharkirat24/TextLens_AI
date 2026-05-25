@@ -15,6 +15,10 @@ from app.core.config import settings
 
 
 logger = logging.getLogger(__name__)
+KNOWN_EMBEDDING_DIMENSIONS = {
+    "all-minilm-l6-v2": 384,
+    "sentence-transformers/all-minilm-l6-v2": 384,
+}
 
 
 class EmbeddingServiceError(RuntimeError):
@@ -48,7 +52,7 @@ class SentenceTransformerEmbeddingService:
         self,
         model_name: str | None = None,
         batch_size: int | None = None,
-        device: str = "cpu",
+        device: str | None = None,
     ) -> None:
         if SentenceTransformer is None:
             raise EmbeddingServiceError(
@@ -57,7 +61,7 @@ class SentenceTransformerEmbeddingService:
         
         self.model_name = model_name or settings.EMBEDDING_MODEL_NAME
         self.batch_size = batch_size or settings.EMBEDDING_BATCH_SIZE
-        self.device = device
+        self.device = _resolve_device(device or settings.EMBEDDING_DEVICE)
         self._model = None
 
     @property
@@ -124,6 +128,9 @@ class SentenceTransformerEmbeddingService:
 
     def get_dimension(self) -> int:
         """Return the embedding dimension of the model."""
+        known_dimension = KNOWN_EMBEDDING_DIMENSIONS.get(self.model_name.strip().lower())
+        if known_dimension:
+            return known_dimension
         return self.model.get_sentence_embedding_dimension()
 
 
@@ -139,6 +146,7 @@ def get_embedding_service() -> EmbeddingService:
         return SentenceTransformerEmbeddingService(
             model_name=settings.EMBEDDING_MODEL_NAME,
             batch_size=settings.EMBEDDING_BATCH_SIZE,
+            device=settings.EMBEDDING_DEVICE,
         )
     if provider == "gemini":
         raise EmbeddingServiceError(
@@ -153,3 +161,21 @@ def _batches(items: list[str], size: int):
     batch_size = max(1, size)
     for start in range(0, len(items), batch_size):
         yield items[start : start + batch_size]
+
+
+def _resolve_device(configured: str) -> str:
+    """Resolve auto/cuda/cpu without making torch a hard import at module load time."""
+    device = (configured or "auto").strip().lower()
+    if device != "auto":
+        return device
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        logger.debug("Could not auto-detect accelerator; falling back to CPU.", exc_info=True)
+    return "cpu"

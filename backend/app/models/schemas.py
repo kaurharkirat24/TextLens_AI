@@ -142,13 +142,6 @@ class EmbedResponse(BaseModel):
     embedding_progress: float = 0.0
 
 
-class ExternalEmbeddingCompleteRequest(BaseModel):
-    model: str = "all-MiniLM-L6-v2"
-    dimension: int = 384
-    count: int
-    index_name: str
-
-
 class SearchRequest(BaseModel):
     query: str
     top_k: int = 5
@@ -179,3 +172,36 @@ class QAResponse(BaseModel):
     answer: str
     supporting_rows: list[SearchResult]
     mode: str
+
+
+class EmbeddingWorkerClaimResponse(BaseModel):
+    job_available: bool = False
+    dataset_id: Optional[str] = None
+    namespace: Optional[str] = None
+    index_name: Optional[str] = None
+    model: Optional[str] = None
+    dimension: Optional[int] = None
+    total_chunks: int = 0
+    start_index: int = 0
+    chunk_download_url: Optional[str] = None
+    message: str = ""
+
+
+class EmbeddingWorkerProgressRequest(BaseModel):
+    processed_chunks: int
+    total_chunks: int
+    dimension: int
+    index_name: str
+    message: Optional[str] = None
+
+
+class EmbeddingWorkerCompleteRequest(BaseModel):
+    processed_chunks: int
+    total_chunks: int
+    dimension: int
+    index_name: str
+    model: str
+
+
+class EmbeddingWorkerFailRequest(BaseModel):
+    error: str

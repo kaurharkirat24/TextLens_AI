@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import time
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -142,8 +143,10 @@ class IngestionPipeline:
 
     def run(self) -> None:
         """Execute the ingestion pipeline."""
+        pipeline_start = time.perf_counter()
         try:
-            mark_embedding_started(self.dataset_id)
+            latest_meta = self._get_meta()
+            mark_embedding_started(self.dataset_id, resume=latest_meta.embedding_status == "processing")
             
             # 1. Chunking phase
             chunks_file, _ = self._process_chunks()
@@ -162,7 +165,41 @@ class IngestionPipeline:
                 count=embedded_count,
                 index_name=self.embedding_index_name
             )
+            logger.info(
+                "Embedding pipeline completed for %s in %.1f seconds",
+                self.dataset_id,
+                time.perf_counter() - pipeline_start,
+            )
             
+        except Exception as exc:
+            logger.exception("Ingestion pipeline failed for %s", self.dataset_id)
+            mark_embedding_failed(self.dataset_id, str(exc))
+            raise
+
+    async def run_async(self) -> None:
+        """Execute the ingestion pipeline without blocking the event loop."""
+        pipeline_start = time.perf_counter()
+        try:
+            latest_meta = self._get_meta()
+            mark_embedding_started(self.dataset_id, resume=latest_meta.embedding_status == "processing")
+
+            chunks_file, _ = await asyncio.to_thread(self._process_chunks)
+            embedded_count, dimension = await self._embed_and_upload_async(chunks_file)
+
+            await asyncio.to_thread(self._cleanup)
+            await asyncio.to_thread(
+                mark_embedding_completed,
+                self.dataset_id,
+                model=self.embedding_service.model_name,
+                dimension=dimension,
+                count=embedded_count,
+                index_name=self.embedding_index_name,
+            )
+            logger.info(
+                "Async embedding pipeline completed for %s in %.1f seconds",
+                self.dataset_id,
+                time.perf_counter() - pipeline_start,
+            )
         except Exception as exc:
             logger.exception("Ingestion pipeline failed for %s", self.dataset_id)
             mark_embedding_failed(self.dataset_id, str(exc))
@@ -170,6 +207,7 @@ class IngestionPipeline:
 
     def _process_chunks(self) -> tuple[Path, Path]:
         """Stream CSV and split into chunks, saving to Parquet for persistence."""
+        start = time.perf_counter()
         chunks_path = self._existing_chunks_path()
         manifest_path = self._manifest_path()
 
@@ -223,8 +261,33 @@ class IngestionPipeline:
         temp_chunks_path.replace(chunks_path)
         self._write_manifest(manifest_path)
         logger.info("Saved %s chunks to %s", chunk_count, chunks_path)
+        elapsed = time.perf_counter() - start
+        logger.info(
+            "Chunking completed for %s: rows_processed=%s chunks=%s elapsed_seconds=%.1f rows_per_sec=%.1f chunks_per_sec=%.1f",
+            self.dataset_id,
+            total_rows_processed,
+            chunk_count,
+            elapsed,
+            total_rows_processed / max(elapsed, 0.001),
+            chunk_count / max(elapsed, 0.001),
+        )
         
         return chunks_path, chunks_path
+
+    def prepare_remote_embedding_job(self) -> tuple[Path, int, int, str]:
+        """Prepare chunks and index metadata for an external embedding worker."""
+        from app.services.vector_store_service import PineconeVectorStore
+
+        chunks_path, _ = self._process_chunks()
+        total_chunks = self._count_chunks(chunks_path)
+        if total_chunks == 0:
+            raise SemanticDatasetError("No chunks found for embedding.")
+
+        dimension = self.embedding_service.get_dimension()
+        vector_store = PineconeVectorStore.for_dimension(dimension)
+        vector_store.ensure_index(dimension)
+        self.embedding_index_name = vector_store.index_name
+        return chunks_path, total_chunks, dimension, vector_store.index_name
 
     def _embed_and_upload(self, chunks_path: Path) -> tuple[int, int]:
         """Embed chunks and upsert each batch immediately."""
@@ -234,13 +297,18 @@ class IngestionPipeline:
         if total_chunks == 0:
             raise SemanticDatasetError("No chunks found for embedding.")
 
-        checkpoint_path = self.storage["temp"] / f"{self.dataset_id}_embedding_upload_checkpoint.json"
-        start_idx = self._load_checkpoint(checkpoint_path)
+        checkpoint_path = self._embedding_checkpoint_path()
+        start_idx = self._load_checkpoint(checkpoint_path, chunks_path, total_chunks)
         if start_idx >= total_chunks:
             start_idx = 0
 
         vector_store = PineconeVectorStore()
-        dimension = 0
+        dimension = self._load_checkpoint_dimension(checkpoint_path)
+        checkpoint_index_name = self._load_checkpoint_index_name(checkpoint_path)
+        if dimension:
+            vector_store = PineconeVectorStore.for_dimension(dimension)
+            self.embedding_index_name = checkpoint_index_name or vector_store.index_name
+            vector_store.ensure_index(dimension)
         embedded_count = start_idx
         saved_embeddings: list[list[float]] = []
         batch_size = self.embedding_service.batch_size
@@ -254,13 +322,44 @@ class IngestionPipeline:
             start_idx,
         )
 
+        embed_ms_total = 0.0
+        payload_ms_total = 0.0
+        upsert_ms_total = 0.0
+        loop_start = time.perf_counter()
+        pending_vectors: list[tuple[str, list[float], dict[str, Any]]] = []
+
+        def flush_vectors(force: bool = False) -> tuple[int, float]:
+            nonlocal upsert_ms_total
+            if not pending_vectors:
+                return 0, 0.0
+            if not force and len(pending_vectors) < settings.PINECONE_UPSERT_BATCH_SIZE:
+                return 0, 0.0
+
+            vectors_to_upsert = list(pending_vectors)
+            pending_vectors.clear()
+            upsert_start = time.perf_counter()
+            vector_store.upsert_vectors(vectors_to_upsert, namespace=self.dataset_id)
+            upsert_ms = (time.perf_counter() - upsert_start) * 1000
+            upsert_ms_total += upsert_ms
+            logger.info(
+                "Embedding upload flush: dataset=%s vectors=%s upsert_ms=%.1f vectors_per_sec=%.1f",
+                self.dataset_id,
+                len(vectors_to_upsert),
+                upsert_ms,
+                len(vectors_to_upsert) / max(upsert_ms / 1000, 0.001),
+            )
+            return len(vectors_to_upsert), upsert_ms
+
         for batch_number, (i, batch) in enumerate(
             self._iter_chunk_batches(chunks_path, start_idx, batch_size),
             start=1,
         ):
             end_idx = min(i + len(batch), total_chunks)
             batch_texts = batch["text"].tolist()
+            embed_start = time.perf_counter()
             batch_embeddings = self.embedding_service.embed_texts(batch_texts, show_progress=False)
+            embed_ms = (time.perf_counter() - embed_start) * 1000
+            embed_ms_total += embed_ms
             if not batch_embeddings:
                 continue
 
@@ -270,27 +369,43 @@ class IngestionPipeline:
                 vector_store.ensure_index(dimension)
                 self.embedding_index_name = vector_store.index_name
 
+            payload_start = time.perf_counter()
             vectors = []
             for embedding, row in zip(batch_embeddings, batch.to_dict("records")):
                 meta = json.loads(row["metadata"])
                 vector_id = f"{self.dataset_id}_{meta['row_id']}_{meta['chunk_id']}"
                 vectors.append((vector_id, embedding, meta))
+            payload_ms = (time.perf_counter() - payload_start) * 1000
+            payload_ms_total += payload_ms
 
-            vector_store.upsert_vectors(vectors, namespace=self.dataset_id)
+            pending_vectors.extend(vectors)
+            flushed_count, upsert_ms = flush_vectors()
             if settings.EMBEDDING_SAVE_VECTORS:
                 saved_embeddings.extend(batch_embeddings)
 
             embedded_count = end_idx
             if batch_number % checkpoint_every == 0 or embedded_count == total_chunks:
-                self._save_checkpoint(checkpoint_path, embedded_count)
-                mark_embedding_progress(self.dataset_id, embedded_count / total_chunks)
+                checkpoint_flushed_count, checkpoint_upsert_ms = flush_vectors(force=True)
+                if checkpoint_flushed_count:
+                    flushed_count += checkpoint_flushed_count
+                    upsert_ms += checkpoint_upsert_ms
+                self._save_checkpoint(checkpoint_path, chunks_path, total_chunks, embedded_count, dimension, self.embedding_index_name)
+                mark_embedding_progress(self.dataset_id, embedded_count / total_chunks, embedded_count)
 
             logger.info(
-                "Embedding upload progress: %.1f%% (%s/%s)",
+                "Embedding upload progress: %.1f%% (%s/%s) batch=%s embed_ms=%.1f payload_ms=%.1f upsert_ms=%.1f flushed_vectors=%s upsert_vectors_per_sec=%.1f",
                 (embedded_count / total_chunks) * 100,
                 embedded_count,
                 total_chunks,
+                batch_number,
+                embed_ms,
+                payload_ms,
+                upsert_ms,
+                flushed_count,
+                flushed_count / max(upsert_ms / 1000, 0.001) if flushed_count else 0.0,
             )
+
+        flush_vectors(force=True)
 
         if settings.EMBEDDING_SAVE_VECTORS and saved_embeddings:
             embeddings_path = self.storage["embeddings"] / f"{self.dataset_id}_embeddings.npy"
@@ -303,6 +418,249 @@ class IngestionPipeline:
         if not dimension:
             dimension = self.embedding_service.get_dimension()
 
+        elapsed = time.perf_counter() - loop_start
+        processed = max(0, embedded_count - start_idx)
+        logger.info(
+            "Embedding upload summary for %s: processed=%s total=%s elapsed_seconds=%.1f vectors_per_sec=%.1f embed_seconds=%.1f payload_seconds=%.1f upsert_seconds=%.1f",
+            self.dataset_id,
+            processed,
+            total_chunks,
+            elapsed,
+            processed / max(elapsed, 0.001),
+            embed_ms_total / 1000,
+            payload_ms_total / 1000,
+            upsert_ms_total / 1000,
+        )
+        return embedded_count, dimension
+
+    async def _embed_and_upload_async(self, chunks_path: Path) -> tuple[int, int]:
+        """Embed chunks and upsert batches with async workers and durable checkpoints."""
+        from app.services.vector_store_service import PineconeVectorStore
+
+        total_chunks = await asyncio.to_thread(self._count_chunks, chunks_path)
+        if total_chunks == 0:
+            raise SemanticDatasetError("No chunks found for embedding.")
+
+        checkpoint_path = self._embedding_checkpoint_path()
+        start_idx = await asyncio.to_thread(self._load_checkpoint, checkpoint_path, chunks_path, total_chunks)
+        if start_idx >= total_chunks:
+            start_idx = 0
+
+        dimension = await asyncio.to_thread(self._load_checkpoint_dimension, checkpoint_path)
+        checkpoint_index_name = await asyncio.to_thread(self._load_checkpoint_index_name, checkpoint_path)
+        embedded_count = start_idx
+        batch_size = self.embedding_service.batch_size
+        checkpoint_every = max(1, settings.EMBEDDING_CHECKPOINT_EVERY_BATCHES)
+        worker_count = max(1, settings.EMBEDDING_WORKERS)
+        pending: dict[int, tuple[int, int, int]] = {}
+        next_checkpoint_batch = 1
+        index_ready = False
+        index_lock = asyncio.Lock()
+        embed_ms_total = 0.0
+        payload_ms_total = 0.0
+        upsert_ms_total = 0.0
+        pending_vectors: list[tuple[str, list[float], dict[str, Any]]] = []
+        upsert_lock = asyncio.Lock()
+        loop_start = time.perf_counter()
+
+        logger.info(
+            "Async embedding upload for %s: %s chunks, batch_size=%s, workers=%s, start=%s",
+            self.dataset_id,
+            total_chunks,
+            batch_size,
+            worker_count,
+            start_idx,
+        )
+
+        async def add_and_flush_vectors(vectors: list[tuple[str, list[float], dict[str, Any]]]) -> tuple[int, float]:
+            nonlocal upsert_ms_total
+            async with upsert_lock:
+                pending_vectors.extend(vectors)
+                if len(pending_vectors) < settings.PINECONE_UPSERT_BATCH_SIZE:
+                    return 0, 0.0
+                vectors_to_upsert = list(pending_vectors)
+                pending_vectors.clear()
+            upsert_start = time.perf_counter()
+            await asyncio.to_thread(batch_store.upsert_vectors, vectors_to_upsert, self.dataset_id)
+            upsert_ms = (time.perf_counter() - upsert_start) * 1000
+            upsert_ms_total += upsert_ms
+            logger.info(
+                "Async embedding upload flush: dataset=%s vectors=%s upsert_ms=%.1f vectors_per_sec=%.1f",
+                self.dataset_id,
+                len(vectors_to_upsert),
+                upsert_ms,
+                len(vectors_to_upsert) / max(upsert_ms / 1000, 0.001),
+            )
+            return len(vectors_to_upsert), upsert_ms
+
+        async def flush_vectors() -> tuple[int, float]:
+            nonlocal upsert_ms_total
+            async with upsert_lock:
+                if not pending_vectors:
+                    return 0, 0.0
+                vectors_to_upsert = list(pending_vectors)
+                pending_vectors.clear()
+            upsert_start = time.perf_counter()
+            await asyncio.to_thread(batch_store.upsert_vectors, vectors_to_upsert, self.dataset_id)
+            upsert_ms = (time.perf_counter() - upsert_start) * 1000
+            upsert_ms_total += upsert_ms
+            logger.info(
+                "Async embedding upload flush: dataset=%s vectors=%s upsert_ms=%.1f vectors_per_sec=%.1f",
+                self.dataset_id,
+                len(vectors_to_upsert),
+                upsert_ms,
+                len(vectors_to_upsert) / max(upsert_ms / 1000, 0.001),
+            )
+            return len(vectors_to_upsert), upsert_ms
+
+        batch_store = PineconeVectorStore()
+        if dimension:
+            batch_store = PineconeVectorStore(index_name=checkpoint_index_name) if checkpoint_index_name else PineconeVectorStore.for_dimension(dimension)
+            self.embedding_index_name = batch_store.index_name
+            await asyncio.to_thread(batch_store.ensure_index, dimension)
+            index_ready = True
+
+        async def process_batch(batch_number: int, i: int, batch: pd.DataFrame) -> tuple[int, int, int, int, float, float, int, float]:
+            nonlocal dimension, index_ready, batch_store
+            batch_texts = batch["text"].tolist()
+            embed_start = time.perf_counter()
+            batch_embeddings = await asyncio.to_thread(
+                self.embedding_service.embed_texts,
+                batch_texts,
+                False,
+            )
+            embed_ms = (time.perf_counter() - embed_start) * 1000
+            if not batch_embeddings:
+                return batch_number, i, i, 0, embed_ms, 0.0, 0, 0.0
+
+            batch_dimension = len(batch_embeddings[0])
+            async with index_lock:
+                if dimension and dimension != batch_dimension:
+                    raise SemanticDatasetError(
+                        f"Embedding dimension changed from {dimension} to {batch_dimension} during ingestion."
+                    )
+                if not dimension:
+                    dimension = batch_dimension
+                if not index_ready:
+                    batch_store = PineconeVectorStore.for_dimension(dimension)
+                    await asyncio.to_thread(batch_store.ensure_index, dimension)
+                    self.embedding_index_name = batch_store.index_name
+                    index_ready = True
+
+            payload_start = time.perf_counter()
+            vectors = []
+            for embedding, row in zip(batch_embeddings, batch.to_dict("records")):
+                meta = json.loads(row["metadata"])
+                vector_id = f"{self.dataset_id}_{meta['row_id']}_{meta['chunk_id']}"
+                vectors.append((vector_id, embedding, meta))
+            payload_ms = (time.perf_counter() - payload_start) * 1000
+
+            flushed_count, upsert_ms = await add_and_flush_vectors(vectors)
+            self.embedding_index_name = batch_store.index_name
+            return batch_number, i, min(i + len(batch), total_chunks), batch_dimension, embed_ms, payload_ms, flushed_count, upsert_ms
+
+        semaphore = asyncio.Semaphore(worker_count)
+
+        async def guarded_process(batch_number: int, i: int, batch: pd.DataFrame) -> tuple[int, int, int, int, float, float, int, float]:
+            async with semaphore:
+                return await process_batch(batch_number, i, batch)
+
+        batch_iter = enumerate(
+            self._iter_chunk_batches(chunks_path, start_idx, batch_size),
+            start=1,
+        )
+        active_tasks: set[asyncio.Task] = set()
+        max_queued = worker_count * 2
+
+        def queue_next_batches() -> None:
+            while len(active_tasks) < max_queued:
+                try:
+                    batch_number, (i, batch) = next(batch_iter)
+                except StopIteration:
+                    return
+                active_tasks.add(asyncio.create_task(guarded_process(batch_number, i, batch)))
+
+        queue_next_batches()
+        try:
+            while active_tasks:
+                done, active_tasks = await asyncio.wait(active_tasks, return_when=asyncio.FIRST_COMPLETED)
+                queue_next_batches()
+                for task in done:
+                    batch_number, _start, end_idx, batch_dimension, embed_ms, payload_ms, flushed_count, upsert_ms = await task
+                    embed_ms_total += embed_ms
+                    payload_ms_total += payload_ms
+                    if batch_dimension and not dimension:
+                        dimension = batch_dimension
+                    pending[batch_number] = (end_idx, batch_dimension, batch_number)
+
+                    while next_checkpoint_batch in pending:
+                        contiguous_end, contiguous_dimension, _ = pending.pop(next_checkpoint_batch)
+                        embedded_count = contiguous_end
+                        if contiguous_dimension:
+                            dimension = contiguous_dimension
+                        if next_checkpoint_batch % checkpoint_every == 0 or embedded_count == total_chunks:
+                            checkpoint_flushed_count, checkpoint_upsert_ms = await flush_vectors()
+                            if checkpoint_flushed_count:
+                                flushed_count += checkpoint_flushed_count
+                                upsert_ms += checkpoint_upsert_ms
+                            await asyncio.to_thread(
+                                self._save_checkpoint,
+                                checkpoint_path,
+                                chunks_path,
+                                total_chunks,
+                                embedded_count,
+                                dimension,
+                                self.embedding_index_name,
+                            )
+                            await asyncio.to_thread(
+                                mark_embedding_progress,
+                                self.dataset_id,
+                                embedded_count / total_chunks,
+                                embedded_count,
+                            )
+                        next_checkpoint_batch += 1
+
+                    logger.info(
+                        "Async embedding upload progress: %.1f%% (%s/%s) batch=%s embed_ms=%.1f payload_ms=%.1f upsert_ms=%.1f flushed_vectors=%s upsert_vectors_per_sec=%.1f",
+                        (embedded_count / total_chunks) * 100,
+                        embedded_count,
+                        total_chunks,
+                        batch_number,
+                        embed_ms,
+                        payload_ms,
+                        upsert_ms,
+                        flushed_count,
+                        flushed_count / max(upsert_ms / 1000, 0.001) if flushed_count else 0.0,
+                    )
+        except Exception:
+            for task in active_tasks:
+                task.cancel()
+            if active_tasks:
+                await asyncio.gather(*active_tasks, return_exceptions=True)
+            raise
+
+        await flush_vectors()
+
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
+
+        if not dimension:
+            dimension = await asyncio.to_thread(self.embedding_service.get_dimension)
+
+        elapsed = time.perf_counter() - loop_start
+        processed = max(0, embedded_count - start_idx)
+        logger.info(
+            "Async embedding upload summary for %s: processed=%s total=%s elapsed_seconds=%.1f vectors_per_sec=%.1f embed_seconds=%.1f payload_seconds=%.1f upsert_seconds=%.1f workers=%s",
+            self.dataset_id,
+            processed,
+            total_chunks,
+            elapsed,
+            processed / max(elapsed, 0.001),
+            embed_ms_total / 1000,
+            payload_ms_total / 1000,
+            upsert_ms_total / 1000,
+            worker_count,
+        )
         return embedded_count, dimension
 
     def _cleanup(self) -> None:
@@ -371,20 +729,77 @@ class IngestionPipeline:
                 except OSError:
                     logger.warning("Could not delete stale semantic artifact %s", file)
 
-    def _load_checkpoint(self, checkpoint_path: Path) -> int:
+    def _embedding_checkpoint_path(self) -> Path:
+        return self.storage["temp"] / f"{self.dataset_id}_embedding_upload_checkpoint.json"
+
+    def _checkpoint_signature(self, chunks_path: Path, total_chunks: int) -> dict[str, Any]:
+        stat = chunks_path.stat() if chunks_path.exists() else None
+        return {
+            "dataset_id": self.dataset_id,
+            "chunks_path": str(chunks_path),
+            "chunks_size": stat.st_size if stat else None,
+            "chunks_mtime_ns": stat.st_mtime_ns if stat else None,
+            "total_chunks": total_chunks,
+            "embedding_provider": self.embedding_service.provider,
+            "embedding_model": self.embedding_service.model_name,
+        }
+
+    def _load_checkpoint(self, checkpoint_path: Path, chunks_path: Path, total_chunks: int) -> int:
         if not checkpoint_path.exists():
             return 0
         try:
             with open(checkpoint_path, "r", encoding="utf-8") as handle:
                 checkpoint = json.load(handle)
+            if checkpoint.get("signature") != self._checkpoint_signature(chunks_path, total_chunks):
+                logger.info("Ignoring stale embedding checkpoint %s", checkpoint_path)
+                return 0
             return max(0, int(checkpoint.get("last_index", 0)))
         except Exception:
             logger.warning("Failed to read embedding checkpoint %s; restarting from zero", checkpoint_path)
             return 0
 
-    def _save_checkpoint(self, checkpoint_path: Path, last_index: int) -> None:
-        with open(checkpoint_path, "w", encoding="utf-8") as handle:
-            json.dump({"last_index": int(last_index)}, handle)
+    def _load_checkpoint_dimension(self, checkpoint_path: Path) -> int:
+        if not checkpoint_path.exists():
+            return 0
+        try:
+            with open(checkpoint_path, "r", encoding="utf-8") as handle:
+                checkpoint = json.load(handle)
+            return max(0, int(checkpoint.get("dimension", 0) or 0))
+        except Exception:
+            return 0
+
+    def _load_checkpoint_index_name(self, checkpoint_path: Path) -> str:
+        if not checkpoint_path.exists():
+            return ""
+        try:
+            with open(checkpoint_path, "r", encoding="utf-8") as handle:
+                checkpoint = json.load(handle)
+            return str(checkpoint.get("index_name") or "")
+        except Exception:
+            return ""
+
+    def _save_checkpoint(
+        self,
+        checkpoint_path: Path,
+        chunks_path: Path,
+        total_chunks: int,
+        last_index: int,
+        dimension: int,
+        index_name: str,
+    ) -> None:
+        checkpoint = {
+            "signature": self._checkpoint_signature(chunks_path, total_chunks),
+            "last_index": int(last_index),
+            "total_chunks": int(total_chunks),
+            "progress": round(last_index / total_chunks, 3) if total_chunks else 0.0,
+            "dimension": int(dimension or 0),
+            "index_name": index_name,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        temp_path = checkpoint_path.with_suffix(".json.tmp")
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(checkpoint, handle)
+        temp_path.replace(checkpoint_path)
 
     def _existing_chunks_path(self) -> Path:
         parquet_path = self.storage["chunks"] / f"{self.dataset_id}_chunks.parquet"
@@ -511,14 +926,20 @@ def mark_embedding_failed(dataset_id: str, error: str) -> None:
     update_dataset(dataset_id, embedding_status="failed", embedding_progress=0.0, error=error)
 
 
-def mark_embedding_progress(dataset_id: str, progress: float) -> None:
+def mark_embedding_progress(dataset_id: str, progress: float, count: int | None = None) -> None:
     """Update embedding progress (0.0 to 1.0)."""
-    update_dataset(dataset_id, embedding_progress=round(progress, 3))
+    fields: dict[str, Any] = {"embedding_progress": round(progress, 3)}
+    if count is not None:
+        fields["embedding_count"] = int(count)
+    update_dataset(dataset_id, **fields)
 
 
-def mark_embedding_started(dataset_id: str) -> None:
+def mark_embedding_started(dataset_id: str, resume: bool = False) -> None:
     """Set initial processing state."""
-    update_dataset(dataset_id, embedding_status="processing", embedding_progress=0.0)
+    fields: dict[str, Any] = {"embedding_status": "processing", "error": None}
+    if not resume:
+        fields.update(embedding_progress=0.0, embedding_count=0)
+    update_dataset(dataset_id, **fields)
 
 
 def _load_analysis(meta: DatasetMeta, dataset_id: str) -> dict[str, Any]:

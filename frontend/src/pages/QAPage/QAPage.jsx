@@ -116,7 +116,7 @@ export default function QAPage() {
 
   // --- Background Polling for Embedding ---
   useEffect(() => {
-    if (displayStatus !== 'processing' || !selectedId) return;
+    if (!['queued', 'processing'].includes(displayStatus) || !selectedId) return;
 
     let active = true;
     const interval = setInterval(async () => {
@@ -339,7 +339,7 @@ export default function QAPage() {
         <StatusTile 
           icon={ShieldCheck} 
           label="Embedding" 
-          value={displayStatus === 'processing' ? `${Math.round(displayProgress * 100)}%` : formatStatus(displayStatus)} 
+          value={['queued', 'processing'].includes(displayStatus) ? `${formatStatus(displayStatus)} ${Math.round(displayProgress * 100)}%` : formatStatus(displayStatus)} 
           tone={statusTone(displayStatus)} 
         />
         <StatusTile icon={Cpu} label="Dimension" value={displayDimension || 'Pending'} tone={displayDimension ? 'info' : 'muted'} />
@@ -535,7 +535,7 @@ function formatStatus(status) {
 
 function statusTone(status) {
   if (status === 'completed') return 'success';
-  if (status === 'processing') return 'info';
+  if (status === 'processing' || status === 'queued') return 'info';
   if (status === 'failed') return 'error';
   return 'muted';
 }

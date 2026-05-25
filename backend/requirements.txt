@@ -18,4 +18,4 @@ nltk
 # Testing
 pytest
 httpx
-pinecone
+pinecone>=9.0.0

@@ -65,14 +65,18 @@ class Settings:
     PINECONE_REGION: str = os.getenv("PINECONE_REGION", "")
     PINECONE_CLOUD: str = os.getenv("PINECONE_CLOUD", "aws")
     PINECONE_UPSERT_BATCH_SIZE: int = int(
-        os.getenv("PINECONE_UPSERT_BATCH_SIZE", os.getenv("VECTOR_UPSERT_BATCH_SIZE", "100"))
+        os.getenv("PINECONE_UPSERT_BATCH_SIZE", os.getenv("VECTOR_UPSERT_BATCH_SIZE", "250"))
     )
+    PINECONE_MIN_UPSERT_BATCH_SIZE: int = int(os.getenv("PINECONE_MIN_UPSERT_BATCH_SIZE", "50"))
+    PINECONE_UPSERT_TIMEOUT_SECONDS: int = int(os.getenv("PINECONE_UPSERT_TIMEOUT_SECONDS", "120"))
+    PINECONE_UPSERT_MAX_RETRIES: int = int(os.getenv("PINECONE_UPSERT_MAX_RETRIES", "5"))
     VECTOR_UPSERT_BATCH_SIZE: int = PINECONE_UPSERT_BATCH_SIZE
 
     # Embedding settings
     EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "sentence_transformer").strip().lower()
     EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
     EMBEDDING_BATCH_SIZE: int = int(os.getenv("EMBEDDING_BATCH_SIZE", "128"))
+    EMBEDDING_DEVICE: str = os.getenv("EMBEDDING_DEVICE", "auto").strip().lower()
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", EMBEDDING_MODEL_NAME)
@@ -84,12 +88,15 @@ class Settings:
     MAX_CHUNK_WORDS: int = int(os.getenv("MAX_CHUNK_WORDS", "180"))
     CSV_READ_CHUNK_SIZE: int = int(os.getenv("CSV_READ_CHUNK_SIZE", "5000"))
     EMBEDDING_CHECKPOINT_EVERY_BATCHES: int = int(os.getenv("EMBEDDING_CHECKPOINT_EVERY_BATCHES", "10"))
+    EMBEDDING_WORKERS: int = int(os.getenv("EMBEDDING_WORKERS", "1"))
     EMBEDDING_SAVE_VECTORS: bool = os.getenv("EMBEDDING_SAVE_VECTORS", "false").strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
+    EMBEDDING_EXECUTION_MODE: str = os.getenv("EMBEDDING_EXECUTION_MODE", "local").strip().lower()
+    EMBEDDING_WORKER_TOKEN: str = os.getenv("EMBEDDING_WORKER_TOKEN", "")
     RAG_MIN_RELEVANCE_SCORE: float = float(os.getenv("RAG_MIN_RELEVANCE_SCORE", "0"))
 
     # Structured Storage Paths

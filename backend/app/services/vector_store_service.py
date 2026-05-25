@@ -21,7 +21,10 @@ class PineconeVectorStore:
     """Single-index Pinecone client using dataset_id as the namespace."""
 
     _client_cache = None
+    _grpc_available: bool | None = None
     _index_cache: dict[str, Any] = {}
+    _index_exists_cache: set[str] = set()
+    _index_dimension_cache: dict[str, int] = {}
 
     def __init__(self, index_name: str | None = None) -> None:
         self.index_name = index_name or settings.PINECONE_INDEX_NAME
@@ -57,9 +60,39 @@ class PineconeVectorStore:
     def index(self):
         if self._index is None:
             if self.index_name not in PineconeVectorStore._index_cache:
-                PineconeVectorStore._index_cache[self.index_name] = self.client.Index(self.index_name)
+                PineconeVectorStore._index_cache[self.index_name] = self._create_index_client()
             self._index = PineconeVectorStore._index_cache[self.index_name]
         return self._index
+
+    @property
+    def transport(self) -> str:
+        return "grpc" if PineconeVectorStore._grpc_available else "rest"
+
+    def _create_index_client(self):
+        """Create a reusable data-plane index client, preferring Pinecone gRPC."""
+        if PineconeVectorStore._grpc_available is not False:
+            try:
+                index_factory = getattr(self.client, "index", None)
+                if callable(index_factory):
+                    index = index_factory(name=self.index_name, grpc=True)
+                else:
+                    from pinecone.grpc import PineconeGRPC
+
+                    grpc_client = PineconeGRPC(api_key=self.api_key)
+                    index = grpc_client.Index(self.index_name)
+                PineconeVectorStore._grpc_available = True
+                logger.info("Initialized Pinecone gRPC index client for %s", self.index_name)
+                return index
+            except Exception as exc:
+                PineconeVectorStore._grpc_available = False
+                logger.warning(
+                    "Pinecone gRPC index client unavailable for %s; falling back to REST client: %s",
+                    self.index_name,
+                    exc,
+                )
+
+        logger.info("Initialized Pinecone REST index client for %s", self.index_name)
+        return self.client.Index(self.index_name)
 
     def ensure_index(self, dimension: int) -> None:
         """Create the configured single index if missing, validating dimension if present."""
@@ -69,7 +102,16 @@ class PineconeVectorStore:
             raise VectorStoreError("Missing Pinecone region")
 
         try:
-            existing_names = set(self.client.list_indexes().names())
+            cached_dimension = PineconeVectorStore._index_dimension_cache.get(self.index_name)
+            if cached_dimension and cached_dimension == dimension:
+                return
+
+            if self.index_name in PineconeVectorStore._index_exists_cache:
+                existing_names = set(PineconeVectorStore._index_exists_cache)
+            else:
+                existing_names = set(self.client.list_indexes().names())
+                PineconeVectorStore._index_exists_cache.update(existing_names)
+
             if self.index_name not in existing_names:
                 self._create_index(dimension)
             else:
@@ -80,8 +122,12 @@ class PineconeVectorStore:
 
     def has_index(self) -> bool:
         """Return whether the configured Pinecone index already exists."""
+        if self.index_name in PineconeVectorStore._index_exists_cache:
+            return True
         try:
-            return self.index_name in set(self.client.list_indexes().names())
+            existing_names = set(self.client.list_indexes().names())
+            PineconeVectorStore._index_exists_cache.update(existing_names)
+            return self.index_name in existing_names
         except Exception as exc:
             logger.exception("Pinecone index lookup failed")
             raise VectorStoreError(f"Pinecone index lookup failed: {exc}") from exc
@@ -89,11 +135,17 @@ class PineconeVectorStore:
     def describe_dimension(self) -> int | None:
         """Return the configured index dimension when the index exists."""
         try:
+            if self.index_name in PineconeVectorStore._index_dimension_cache:
+                return PineconeVectorStore._index_dimension_cache[self.index_name]
             if not self.has_index():
                 return None
             description = self.client.describe_index(self.index_name)
             dimension = _response_value(description, "dimension", None)
-            return int(dimension) if dimension else None
+            if not dimension:
+                return None
+            dimension = int(dimension)
+            PineconeVectorStore._index_dimension_cache[self.index_name] = dimension
+            return dimension
         except Exception as exc:
             logger.exception("Pinecone index describe failed")
             raise VectorStoreError(f"Pinecone index describe failed: {exc}") from exc
@@ -116,38 +168,105 @@ class PineconeVectorStore:
         vectors: list[tuple[str, list[float], dict[str, Any]]],
         namespace: str,
         batch_size: int | None = None,
-        max_retries: int = 3,
+        max_retries: int | None = None,
     ) -> int:
         """Upsert vectors into the dataset namespace in batches with retry logic."""
         if not vectors:
             return 0
         count = 0
         size = batch_size or settings.PINECONE_UPSERT_BATCH_SIZE
+        retries = max_retries or settings.PINECONE_UPSERT_MAX_RETRIES
+        total_vectors = len(vectors)
+        start = time.perf_counter()
+        batch_count = 0
         
         for batch in _batches(vectors, size):
+            batch_count += 1
+            payload_start = time.perf_counter()
             payload = [
                 {"id": vector_id, "values": values, "metadata": metadata}
                 for vector_id, values, metadata in batch
             ]
-            
-            attempt = 0
-            while attempt < max_retries:
-                try:
-                    self.index.upsert(vectors=payload, namespace=namespace)
-                    count += len(payload)
-                    break
-                except Exception as exc:
-                    attempt += 1
-                    if attempt == max_retries:
-                        logger.exception("Pinecone upsert failed after %s attempts", max_retries)
-                        raise VectorStoreError(f"Pinecone upsert failed after {max_retries} attempts: {exc}") from exc
-                    
-                    wait_time = 2 ** attempt
-                    logger.warning("Pinecone upsert failed (attempt %s/%s). Retrying in %s seconds...", 
-                                   attempt, max_retries, wait_time)
-                    time.sleep(wait_time)
-            
+            payload_ms = (time.perf_counter() - payload_start) * 1000
+            upsert_start = time.perf_counter()
+            upserted = self._upsert_payload_with_retry(payload, namespace, retries)
+            upsert_ms = (time.perf_counter() - upsert_start) * 1000
+            count += upserted
+            logger.info(
+                "Pinecone %s upsert batch completed: vectors=%s namespace=%s payload_ms=%.1f upsert_ms=%.1f vectors_per_sec=%.1f",
+                self.transport,
+                upserted,
+                namespace,
+                payload_ms,
+                upsert_ms,
+                upserted / max(upsert_ms / 1000, 0.001),
+            )
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            "Pinecone upsert completed: vectors=%s batches=%s batch_size=%s namespace=%s elapsed_ms=%.1f vectors_per_sec=%.1f transport=%s",
+            total_vectors,
+            batch_count,
+            size,
+            namespace,
+            elapsed_ms,
+            total_vectors / max(elapsed_ms / 1000, 0.001),
+            self.transport,
+        )
         return count
+
+    def _upsert_payload_with_retry(
+        self,
+        payload: list[dict[str, Any]],
+        namespace: str,
+        max_retries: int,
+    ) -> int:
+        """Upsert one payload, splitting it if writes repeatedly time out."""
+        attempt = 0
+        while attempt < max_retries:
+            try:
+                self.index.upsert(
+                    vectors=payload,
+                    namespace=namespace,
+                    timeout=settings.PINECONE_UPSERT_TIMEOUT_SECONDS,
+                )
+                return len(payload)
+            except Exception as exc:
+                attempt += 1
+                if attempt == max_retries:
+                    if len(payload) > settings.PINECONE_MIN_UPSERT_BATCH_SIZE:
+                        midpoint = max(1, len(payload) // 2)
+                        logger.warning(
+                            "Pinecone upsert failed after %s attempts for %s vectors; splitting into %s and %s vectors.",
+                            max_retries,
+                            len(payload),
+                            midpoint,
+                            len(payload) - midpoint,
+                        )
+                        return self._upsert_payload_with_retry(
+                            payload[:midpoint],
+                            namespace,
+                            max_retries,
+                        ) + self._upsert_payload_with_retry(
+                            payload[midpoint:],
+                            namespace,
+                            max_retries,
+                        )
+
+                    logger.exception("Pinecone upsert failed after %s attempts", max_retries)
+                    raise VectorStoreError(f"Pinecone upsert failed after {max_retries} attempts: {exc}") from exc
+
+                wait_time = min(30, 2 ** attempt)
+                logger.warning(
+                    "Pinecone upsert failed for %s vectors (attempt %s/%s). Retrying in %s seconds...",
+                    len(payload),
+                    attempt,
+                    max_retries,
+                    wait_time,
+                )
+                time.sleep(wait_time)
+
+        return 0
 
     def query(self, vector: list[float], namespace: str, top_k: int) -> list[dict[str, Any]]:
         """Query a single dataset namespace and return normalized matches."""
@@ -195,11 +314,21 @@ class PineconeVectorStore:
             spec=ServerlessSpec(cloud=self.cloud, region=self.region),
             deletion_protection="disabled",
         )
+        PineconeVectorStore._index_exists_cache.add(self.index_name)
+        PineconeVectorStore._index_dimension_cache[self.index_name] = int(dimension)
         self._wait_until_ready()
 
     def _validate_or_select_dimension_index(self, expected_dimension: int, existing_names: set[str]) -> None:
-        description = self.client.describe_index(self.index_name)
-        actual_dimension = _response_value(description, "dimension", None)
+        cached_dimension = PineconeVectorStore._index_dimension_cache.get(self.index_name)
+        if cached_dimension:
+            if cached_dimension == expected_dimension:
+                return
+            actual_dimension = cached_dimension
+        else:
+            description = self.client.describe_index(self.index_name)
+            actual_dimension = _response_value(description, "dimension", None)
+            if actual_dimension:
+                PineconeVectorStore._index_dimension_cache[self.index_name] = int(actual_dimension)
         if not actual_dimension or int(actual_dimension) == expected_dimension:
             return
 
@@ -219,13 +348,20 @@ class PineconeVectorStore:
         if dimension_index_name not in existing_names:
             self._create_index(expected_dimension)
         else:
-            description = self.client.describe_index(dimension_index_name)
-            actual_dimension = _response_value(description, "dimension", None)
+            cached_dimension = PineconeVectorStore._index_dimension_cache.get(dimension_index_name)
+            if cached_dimension:
+                actual_dimension = cached_dimension
+            else:
+                description = self.client.describe_index(dimension_index_name)
+                actual_dimension = _response_value(description, "dimension", None)
+                if actual_dimension:
+                    PineconeVectorStore._index_dimension_cache[dimension_index_name] = int(actual_dimension)
             if actual_dimension and int(actual_dimension) != expected_dimension:
                 raise VectorStoreError(
                     f"Dimension-specific Pinecone index {dimension_index_name} has dimension "
                     f"{actual_dimension}, expected {expected_dimension}"
                 )
+        PineconeVectorStore._index_exists_cache.add(dimension_index_name)
 
     def _wait_until_ready(self, timeout_seconds: int = 120) -> None:
         deadline = time.time() + timeout_seconds

@@ -73,16 +73,3 @@ LLM_PROVIDER=gemini
 LLM_MODEL=gemini-2.5-flash
 GEMINI_API_KEY=your_gemini_api_key_here
 ```
-
-## Colab Embedding Generation
-
-Use `docs/colab_sentence_transformer_embeddings_2026-05-21.md` to run the expensive chunk embedding job on Colab/GPU, upsert vectors into Pinecone, then mark the local dataset as ready.
-
-Colab must use the same embedding model and dimension:
-
-```text
-model: all-MiniLM-L6-v2
-dimension: 384
-index: textlens-ai-384
-namespace: dataset_id
-```
