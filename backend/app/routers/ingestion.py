@@ -1,8 +1,10 @@
 """
-Ingestion router — file upload, dataset listing, and preview endpoints.
+Ingestion router - file upload, dataset listing, and preview endpoints.
 """
 
+import logging
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -34,9 +36,26 @@ from ingestion.config import IngestionConfig
 from ingestion.pipeline import ingest
 
 router = APIRouter(prefix="/api", tags=["ingestion"])
+logger = logging.getLogger(__name__)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename by keeping only alphanumeric, dots, dashes and underscores.
+    """
+    path = Path(filename)
+    name = path.stem
+    ext = path.suffix.lower()
+    # Remove everything except alphanumeric, dots, dashes, underscores
+    clean_name = re.sub(r'[^a-zA-Z0-9._-]', '_', name)
+    # Ensure it's not too long and doesn't start with dots/dashes
+    clean_name = clean_name.strip('._-')
+    if not clean_name:
+        clean_name = "dataset"
+    return f"{clean_name[:100]}{ext}"
+
 
 def _report_to_schema(report, filename: str) -> IngestionReportSchema:
     """Convert the dataclass-based IngestionReport → Pydantic schema."""
@@ -99,6 +118,7 @@ async def upload_file(
     Upload a file, run the ingestion pipeline, and return a structured report.
     Currently supports CSV files.
     """
+    logger.info("Upload requested for filename=%s text_column=%s", file.filename, text_column)
     # Validate file type
     allowed_extensions = {".csv"}
     ext = Path(file.filename).suffix.lower()
@@ -108,11 +128,26 @@ async def upload_file(
             detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(allowed_extensions)}",
         )
 
+    # Enforce file size limit
+    file.file.seek(0, os.SEEK_END)
+    file_size = file.file.tell()
+    file.file.seek(0)
+
+    if file_size > settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {settings.MAX_UPLOAD_SIZE_MB}MB.",
+        )
+
+    # Sanitize filename
+    safe_name = sanitize_filename(file.filename)
+
     # Save uploaded file to disk
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     dataset_meta = create_dataset(file.filename, "")
+    logger.info("Created dataset registry entry dataset_id=%s", dataset_meta.id)
 
-    upload_path = os.path.join(settings.UPLOAD_DIR, f"{dataset_meta.id}_{file.filename}")
+    upload_path = os.path.join(settings.UPLOAD_DIR, f"{dataset_meta.id}_{safe_name}")
     with open(upload_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
@@ -138,9 +173,21 @@ async def upload_file(
         "text_column": report.text_column.column_name if report.text_column else None,
         "clean_csv_path": report.clean_csv_path or "",
         "report_json_path": report.report_json_path or "",
+        "embedding_status": "not_started" if report.success else None,
+        "embedding_model": None,
+        "embedding_dimension": None,
+        "embedding_count": 0,
+        "embedding_index_name": None,
+        "embedded_at": None,
         "error": report.error,
     }
     update_dataset(dataset_meta.id, **update_fields)
+    logger.info(
+        "Upload pipeline finished for dataset_id=%s success=%s clean_rows=%s",
+        dataset_meta.id,
+        report.success,
+        report.stats.clean_count if report.stats else 0,
+    )
 
     report_schema = _report_to_schema(report, file.filename)
 

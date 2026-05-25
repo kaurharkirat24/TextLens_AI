@@ -102,10 +102,12 @@ def save_clean_dataset(
     stem = Path(original_filename).stem or "dataset"
     path = os.path.join(output_dir, f"clean_{stem}.csv")
     output_df = cleaned_df
+
     if columns:
         preserved = [column for column in columns if column in output_df.columns]
         if preserved:
             output_df = output_df[preserved]
+
     output_df.to_csv(path, index=False, encoding="utf-8")
     return path
 

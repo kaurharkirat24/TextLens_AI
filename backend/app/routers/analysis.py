@@ -1,11 +1,12 @@
 """
-Analysis router — endpoints for data processing and auto-analytics.
+Analysis router - endpoints for data processing and auto-analytics.
 
 Phase 2 endpoints:
   POST /api/datasets/{id}/analyze   — Run the full analysis pipeline
   GET  /api/datasets/{id}/analysis  — Retrieve saved analysis results
 """
 
+import logging
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ from app.services.dataset_manager import get_dataset, update_dataset
 from app.services.analysis_pipeline import load_csv, run_analysis, save_analysis_results
 
 router = APIRouter(prefix="/api", tags=["analysis"])
+logger = logging.getLogger(__name__)
 
 
 # ── POST /api/datasets/{id}/analyze ──────────────────────────────────────────
@@ -33,6 +35,7 @@ async def analyze_dataset(dataset_id: str):
     meta = get_dataset(dataset_id)
     if not meta:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_id}' not found")
+    logger.info("Starting analysis for dataset_id=%s", dataset_id)
 
     # Prefer the clean CSV from ingestion, fall back to original upload
     csv_path = (
@@ -67,11 +70,19 @@ async def analyze_dataset(dataset_id: str):
             analysis_path=analysis_path,
             clean_csv_path=results.get("clean_dataset_path") or meta.clean_csv_path,
             clean_rows=results.get("stats", {}).get("total_rows_after_cleaning", meta.clean_rows),
+            embedding_status="not_started",
+            embedding_model=None,
+            embedding_dimension=None,
+            embedding_count=0,
+            embedding_index_name=None,
+            embedded_at=None,
         )
+        logger.info("Analysis completed for dataset_id=%s", dataset_id)
 
         return results
 
     except Exception as exc:
+        logger.exception("Analysis failed for dataset_id=%s", dataset_id)
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(exc)}")
 
 

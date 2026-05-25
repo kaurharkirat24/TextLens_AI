@@ -104,4 +104,41 @@ export async function downloadCleanDataset(datasetId) {
   };
 }
 
+
+// Semantic Search + QA
+
+/**
+ * Embed a cleaned dataset into the configured vector index.
+ * @param {string} datasetId
+ * @returns {Promise<object>}
+ */
+export async function embedDataset(datasetId) {
+  const res = await api.post('/embed', { dataset_id: datasetId });
+  return res.data;
+}
+
+/**
+ * Search a dataset namespace semantically.
+ * @param {string} datasetId
+ * @param {string} query
+ * @param {number} topK
+ * @returns {Promise<object>}
+ */
+export async function searchDataset(datasetId, query, topK = 5) {
+  const res = await api.post('/search', { dataset_id: datasetId, query, top_k: topK });
+  return res.data;
+}
+
+/**
+ * Ask a grounded QA question over a dataset namespace.
+ * @param {string} datasetId
+ * @param {string} question
+ * @param {number} topK
+ * @returns {Promise<object>}
+ */
+export async function askDatasetQuestion(datasetId, question, topK = 5) {
+  const res = await api.post('/qa', { dataset_id: datasetId, question, top_k: topK });
+  return res.data;
+}
+
 export default api;

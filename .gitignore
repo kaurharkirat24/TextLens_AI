@@ -16,6 +16,7 @@ test-tmp/
 # ── Uploads & Output ──
 uploads/
 output/
+backend/.runtime/
 
 # ── Node / React ──
 node_modules/
