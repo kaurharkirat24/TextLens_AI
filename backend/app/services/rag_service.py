@@ -41,14 +41,16 @@ class DatasetRAGPipeline:
 
         meta = self._load_ready_dataset(dataset_id)
         self.semantic_retriever.validate_embedding_contract(meta)
-        query_embedding = self.semantic_retriever.embed_query(cleaned_query)
-        cached = self.semantic_cache.get(dataset_id, "search", top_k, query_embedding)
+        cache_scope = self._cache_scope(meta)
+        cache_embedding = self.semantic_retriever.embed_query(cleaned_query, use_hyde=False)
+        cached = self.semantic_cache.get(cache_scope, "search", top_k, cache_embedding)
         if cached is not None:
             logger.info("Semantic cache hit for search dataset_id=%s", dataset_id)
             return cached
 
         start = time.perf_counter()
-        filtered = self.semantic_retriever.search_by_embedding(meta, dataset_id, query_embedding, top_k)
+        retrieval_embedding = self.semantic_retriever.embed_query(cleaned_query)
+        filtered = self.semantic_retriever.search_by_embedding(meta, dataset_id, retrieval_embedding, top_k)
         elapsed_ms = (time.perf_counter() - start) * 1000
         logger.info(
             "Dataset RAG retrieval completed dataset_id=%s model=%s dimension=%s results=%s in %.1f ms",
@@ -58,7 +60,7 @@ class DatasetRAGPipeline:
             len(filtered),
             elapsed_ms,
         )
-        self.semantic_cache.put(dataset_id, "search", top_k, query_embedding, filtered)
+        self.semantic_cache.put(cache_scope, "search", top_k, cache_embedding, filtered)
         return filtered
 
     def answer(self, dataset_id: str, question: str, top_k: int) -> dict[str, Any]:
@@ -66,14 +68,6 @@ class DatasetRAGPipeline:
         cleaned_question = question.strip()
         if not cleaned_question:
             raise SemanticDatasetError("Question cannot be empty")
-        question_embedding = self.semantic_retriever.embed_query(cleaned_question)
-        cached_answer = self.semantic_cache.get(dataset_id, "qa", top_k, question_embedding)
-        if cached_answer is not None:
-            cached_copy = dict(cached_answer)
-            plan = dict(cached_copy.get("retrieval_plan") or {})
-            plan["semantic_cache"] = {"hit": True}
-            cached_copy["retrieval_plan"] = plan
-            return cached_copy
 
         context = RetrievalContext.load(dataset_id)
         routed = self.query_router.route(context, cleaned_question, top_k)
@@ -99,13 +93,25 @@ class DatasetRAGPipeline:
 
         rows: list[dict[str, Any]] = list(routed.rows or [])
         plan = routed.plan
+        cache_embedding: list[float] | None = None
+        cache_scope = self._cache_scope(context.meta)
         if plan.use_semantic:
             self._ensure_ready_for_semantic(context.meta)
             self.semantic_retriever.validate_embedding_contract(context.meta)
+            cache_embedding = self.semantic_retriever.embed_query(cleaned_question, use_hyde=False)
+            cached_answer = self.semantic_cache.get(cache_scope, "qa", plan.top_k, cache_embedding)
+            if cached_answer is not None:
+                cached_copy = dict(cached_answer)
+                cached_plan = dict(cached_copy.get("retrieval_plan") or {})
+                cached_plan["semantic_cache"] = {"hit": True}
+                cached_copy["retrieval_plan"] = cached_plan
+                logger.info("Semantic cache hit for QA dataset_id=%s", dataset_id)
+                return cached_copy
+            retrieval_embedding = self.semantic_retriever.embed_query(cleaned_question)
             semantic_rows = self.semantic_retriever.search_by_embedding(
                 context.meta,
                 dataset_id,
-                question_embedding,
+                retrieval_embedding,
                 plan.top_k,
             )
             semantic_ids = {item.get("id") for item in semantic_rows}
@@ -129,9 +135,14 @@ class DatasetRAGPipeline:
             "final_confidence": answer.get("confidence"),
         }
 
-        if self._should_retry_with_self_rag(answer, plan, rows):
-            expanded_top_k = min(plan.top_k + 3, 10)
+        retries_used = 0
+        rewritten_queries: list[str] = []
+        expanded_top_k = plan.top_k
+        max_retries = max(0, settings.SELF_RAG_MAX_RETRIES)
+        while retries_used < max_retries and self._should_retry_with_self_rag(answer, plan, rows):
+            expanded_top_k = min(plan.top_k + 3 + retries_used, 10)
             rewritten_query = self.qa_service.rewrite_query(cleaned_question, rows, plan.intent)
+            rewritten_queries.append(rewritten_query)
             refined_rows = self.semantic_retriever.search(context.meta, dataset_id, rewritten_query, expanded_top_k)
             refined_answer = self.qa_service.answer(
                 cleaned_question,
@@ -144,10 +155,14 @@ class DatasetRAGPipeline:
             if float(refined_answer.get("confidence") or 0.0) >= float(answer.get("confidence") or 0.0):
                 answer = refined_answer
                 rows = refined_rows
+            retries_used += 1
+
+        if retries_used:
             retrieval_plan["self_rag"] = {
                 "enabled": True,
-                "passes": 2,
-                "rewritten_query": rewritten_query,
+                "passes": 1 + retries_used,
+                "rewritten_query": rewritten_queries[-1],
+                "rewritten_queries": rewritten_queries,
                 "expanded_top_k": expanded_top_k,
                 "initial_confidence": retrieval_plan["self_rag"]["initial_confidence"],
                 "final_confidence": answer.get("confidence"),
@@ -155,7 +170,8 @@ class DatasetRAGPipeline:
 
         answer["supporting_rows"] = answer.get("supporting_rows") or rows
         answer["retrieval_plan"] = retrieval_plan
-        self.semantic_cache.put(dataset_id, "qa", top_k, question_embedding, dict(answer))
+        if cache_embedding is not None:
+            self.semantic_cache.put(cache_scope, "qa", plan.top_k, cache_embedding, dict(answer))
         return answer
 
     def _load_ready_dataset(self, dataset_id: str) -> DatasetMeta:
@@ -172,10 +188,23 @@ class DatasetRAGPipeline:
     def _should_retry_with_self_rag(self, answer: dict[str, Any], plan, rows: list[dict[str, Any]]) -> bool:
         if not settings.SELF_RAG_ENABLED:
             return False
-        if settings.SELF_RAG_MAX_RETRIES < 1:
-            return False
         if not plan.use_semantic:
             return False
         if not rows:
             return False
         return float(answer.get("confidence") or 0.0) < settings.SELF_RAG_CONFIDENCE_THRESHOLD
+
+    def _cache_scope(self, meta: DatasetMeta) -> str:
+        embedded_at = meta.embedded_at.isoformat() if meta.embedded_at else ""
+        return ":".join(
+            [
+                meta.id,
+                meta.embedding_index_name or "",
+                meta.embedding_model or "",
+                str(meta.embedding_dimension or ""),
+                str(meta.embedding_count or 0),
+                embedded_at,
+                meta.analysis_path or "",
+                meta.clean_csv_path or "",
+            ]
+        )

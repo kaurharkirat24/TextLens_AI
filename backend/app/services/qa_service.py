@@ -116,6 +116,8 @@ class QAService:
         rows: list[dict[str, Any]],
         analytics: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        if not settings.SELF_RAG_ENABLED:
+            return _heuristic_confidence(answer, rows)
         llm_assessment = self._llm_confidence_assessment(question, answer, rows, analytics)
         if llm_assessment:
             return llm_assessment

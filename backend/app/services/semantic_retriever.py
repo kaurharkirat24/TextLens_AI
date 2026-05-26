@@ -20,8 +20,8 @@ class SemanticRetriever:
         query_embedding = self.embed_query(query)
         return self.search_by_embedding(meta, dataset_id, query_embedding, top_k)
 
-    def embed_query(self, query: str) -> list[float]:
-        expanded_query = self._hyde_service.expand(query)
+    def embed_query(self, query: str, *, use_hyde: bool = True) -> list[float]:
+        expanded_query = self._hyde_service.expand(query) if use_hyde else query
         return self.embedding_service.embed_query(expanded_query)
 
     def search_by_embedding(self, meta: DatasetMeta, dataset_id: str, query_embedding: list[float], top_k: int) -> list[dict]:

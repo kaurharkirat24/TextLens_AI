@@ -23,6 +23,7 @@ class RetrievalPlanner:
     """Keep routing choices centralized and easy to tune."""
 
     def plan(self, intent: QueryIntent, effective_top_k: int, complexity: str = "medium") -> RetrievalPlan:
+        # `effective_top_k` is already adapted and bounded by QueryRouter.
         top_k = max(1, min(effective_top_k, 10))
 
         if intent.intent == "aggregation":
@@ -40,7 +41,7 @@ class RetrievalPlanner:
             return RetrievalPlan(
                 intent=intent.intent,
                 strategy="hybrid",
-                top_k=max(top_k, 8),
+                top_k=top_k,
                 prompt_style=intent.intent,
                 use_semantic=True,
                 use_analytics=True,
@@ -51,7 +52,7 @@ class RetrievalPlanner:
             return RetrievalPlan(
                 intent=intent.intent,
                 strategy="hybrid",
-                top_k=max(top_k, 10),
+                top_k=top_k,
                 prompt_style="summary",
                 use_semantic=True,
                 use_analytics=True,
@@ -73,7 +74,7 @@ class RetrievalPlanner:
         return RetrievalPlan(
             intent="semantic_exploration",
             strategy="semantic",
-            top_k=max(top_k, 8),
+            top_k=top_k,
             prompt_style="exploration",
             use_semantic=True,
             use_analytics=False,
