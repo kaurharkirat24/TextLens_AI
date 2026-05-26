@@ -64,6 +64,21 @@ def _analytics_context(analytics: dict[str, Any] | None) -> str:
             + ", ".join(f"{label}: {count}" for label, count in sentiment.items())
         )
 
+    categorical = analytics.get("categorical_distributions") or []
+    for item in categorical[:4]:
+        values = ", ".join(
+            f"{entry.get('value')}: {entry.get('count')}" for entry in (item.get("top_values") or [])[:5]
+        )
+        if values:
+            lines.append(f"Top values for {item.get('column')}: {values}")
+
+    numeric = analytics.get("numeric_summaries") or []
+    for item in numeric[:4]:
+        lines.append(
+            f"{item.get('column')} summary: min {item.get('min')}, max {item.get('max')}, "
+            f"mean {item.get('mean')}, median {item.get('median')}"
+        )
+
     time_summary = analytics.get("time_summary") or {}
     if time_summary.get("available"):
         lines.append(

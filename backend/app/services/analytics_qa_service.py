@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections import Counter
 from typing import Any
 
 import pandas as pd
@@ -13,6 +12,7 @@ import pandas as pd
 from app.core.config import settings
 from app.models.schemas import DatasetMeta
 from app.services.data_processor import extract_keywords
+from app.services.retrieval_context import RetrievalContext
 from app.services.semantic_dataset_service import SemanticDatasetError
 
 
@@ -23,10 +23,11 @@ MAX_EXAMPLES = 5
 class AnalyticsQAService:
     """Compute compact aggregate facts from the cleaned dataset."""
 
-    def build_context(self, meta: DatasetMeta, question: str, intent: str) -> dict[str, Any]:
-        df = _load_clean_dataframe(meta)
-        analysis = _load_analysis(meta)
-        primary_text = _primary_text_column(meta, analysis, df)
+    def build_context(self, meta: DatasetMeta | RetrievalContext, question: str, intent: str) -> dict[str, Any]:
+        context = _context_from_inputs(meta)
+        df = context.dataframe
+        analysis = context.analysis
+        primary_text = _primary_text_column(context, df)
 
         if len(df) > MAX_ANALYTICS_ROWS:
             df = df.sample(MAX_ANALYTICS_ROWS, random_state=42).reset_index(drop=True)
@@ -36,6 +37,8 @@ class AnalyticsQAService:
             "primary_text_column": primary_text,
             "keywords": [],
             "sentiment_distribution": {},
+            "categorical_distributions": _categorical_distributions(df, analysis),
+            "numeric_summaries": _numeric_summaries(df),
             "representative_rows": [],
             "notes": [],
         }
@@ -48,7 +51,7 @@ class AnalyticsQAService:
         context["sentiment_distribution"] = _sentiment_distribution(df)
         context["representative_rows"] = _representative_rows(df, primary_text, keywords, question)
 
-        if intent in {"trend", "comparison"}:
+        if intent in {"trend", "comparison", "summarization"}:
             context["time_summary"] = _time_summary(df, analysis)
         return context
 
@@ -75,10 +78,11 @@ def analytics_rows(analytics: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _load_clean_dataframe(meta: DatasetMeta) -> pd.DataFrame:
-    if not meta.clean_csv_path or not os.path.exists(meta.clean_csv_path):
-        raise SemanticDatasetError("Clean dataset not found. Run analysis before analytics QA.")
-    return pd.read_csv(meta.clean_csv_path)
+def _context_from_inputs(meta: DatasetMeta | RetrievalContext) -> RetrievalContext:
+    if isinstance(meta, RetrievalContext):
+        return meta
+    analysis = _load_analysis(meta)
+    return RetrievalContext(dataset_id=meta.id, meta=meta, analysis=analysis)
 
 
 def _load_analysis(meta: DatasetMeta) -> dict[str, Any]:
@@ -96,8 +100,8 @@ def _load_analysis(meta: DatasetMeta) -> dict[str, Any]:
     return {}
 
 
-def _primary_text_column(meta: DatasetMeta, analysis: dict[str, Any], df: pd.DataFrame) -> str:
-    column = (analysis.get("column_roles") or {}).get("primary_text") or meta.text_column or ""
+def _primary_text_column(context: RetrievalContext, df: pd.DataFrame) -> str:
+    column = (context.analysis.get("column_roles") or {}).get("primary_text") or context.meta.text_column or ""
     return column if column in df.columns else ""
 
 
@@ -107,6 +111,55 @@ def _sentiment_distribution(df: pd.DataFrame) -> dict[str, int]:
         return {}
     counts = df[sentiment_col].fillna("unknown").astype(str).str.strip().replace("", "unknown").value_counts()
     return {str(label): int(count) for label, count in counts.head(10).items()}
+
+
+def _categorical_distributions(df: pd.DataFrame, analysis: dict[str, Any]) -> list[dict[str, Any]]:
+    schema = ((analysis.get("schema") or {}).get("columns") or {}) if isinstance(analysis, dict) else {}
+    items = []
+    for column in df.columns:
+        if column.endswith(("__word_count", "__sentiment_score", "__sentiment_label")):
+            continue
+        kind = schema.get(column)
+        unique_count = df[column].nunique(dropna=True)
+        if kind not in {"categorical", "datetime"} and unique_count > min(50, max(10, int(len(df) * 0.2))):
+            continue
+        counts = df[column].dropna().astype(str).str.strip().replace("", "unknown").value_counts().head(8)
+        if counts.empty:
+            continue
+        items.append(
+            {
+                "column": column,
+                "unique_count": int(unique_count),
+                "top_values": [{"value": str(label), "count": int(count)} for label, count in counts.items()],
+            }
+        )
+        if len(items) >= 6:
+            break
+    return items
+
+
+def _numeric_summaries(df: pd.DataFrame) -> list[dict[str, Any]]:
+    summaries = []
+    for column in df.columns:
+        if column.endswith(("__word_count", "__sentiment_score", "__sentiment_label")):
+            continue
+        series = pd.to_numeric(df[column], errors="coerce")
+        values = series.dropna()
+        if values.empty or values.nunique(dropna=True) <= 1:
+            continue
+        summaries.append(
+            {
+                "column": column,
+                "count": int(values.count()),
+                "min": float(values.min()),
+                "max": float(values.max()),
+                "mean": float(values.mean()),
+                "median": float(values.median()),
+            }
+        )
+        if len(summaries) >= 6:
+            break
+    return summaries
 
 
 def _representative_rows(

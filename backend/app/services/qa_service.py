@@ -88,6 +88,20 @@ class QAService:
             "analytics": analytics,
         }
 
+    def unrelated_answer(self, supported_topics: list[str] | None = None) -> dict[str, Any]:
+        answer = "This question does not appear related to the uploaded dataset."
+        topics = [topic for topic in (supported_topics or []) if topic][:6]
+        if topics:
+            answer += "\n\nI can answer questions about: " + ", ".join(topics) + "."
+        return {
+            "answer": answer,
+            "supporting_rows": [],
+            "mode": "out_of_scope",
+            "intent": "dataset_relevance",
+            "strategy": "guardrail",
+            "analytics": None,
+        }
+
     def _llm_answer(
         self,
         question: str,
@@ -192,6 +206,15 @@ class QAService:
                 )
             if sentiment:
                 parts.append("Sentiment distribution: " + ", ".join(f"{k}: {v}" for k, v in sentiment.items()) + ".")
+            categorical = analytics.get("categorical_distributions") or []
+            if categorical:
+                first = categorical[0]
+                values = ", ".join(
+                    f"{item.get('value')}: {item.get('count')}"
+                    for item in (first.get("top_values") or [])[:5]
+                )
+                if values:
+                    parts.append(f"Top {first.get('column')} values: {values}.")
             return " ".join(parts)
 
         if not rows:
