@@ -12,6 +12,7 @@ from app.services.query_router import QueryRouter
 from app.services.retrieval_context import RetrievalContext
 from app.services.semantic_retriever import SemanticRetriever
 from app.services.semantic_dataset_service import SemanticDatasetError, load_semantic_dataset
+from app.core.config import settings
 
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,41 @@ class DatasetRAGPipeline:
             prompt_style=plan.prompt_style,
             analytics=routed.analytics,
         )
-        answer["retrieval_plan"] = routed.retrieval_plan
+        retrieval_plan = dict(routed.retrieval_plan)
+        retrieval_plan["self_rag"] = {
+            "enabled": settings.SELF_RAG_ENABLED,
+            "passes": 1,
+            "rewritten_query": None,
+            "initial_confidence": answer.get("confidence"),
+            "final_confidence": answer.get("confidence"),
+        }
+
+        if self._should_retry_with_self_rag(answer, plan, rows):
+            expanded_top_k = min(plan.top_k + 3, 10)
+            rewritten_query = self.qa_service.rewrite_query(cleaned_question, rows, plan.intent)
+            refined_rows = self.semantic_retriever.search(context.meta, dataset_id, rewritten_query, expanded_top_k)
+            refined_answer = self.qa_service.answer(
+                cleaned_question,
+                refined_rows,
+                intent=plan.intent,
+                strategy=f"{plan.strategy}_self_rag",
+                prompt_style=plan.prompt_style,
+                analytics=routed.analytics,
+            )
+            if float(refined_answer.get("confidence") or 0.0) >= float(answer.get("confidence") or 0.0):
+                answer = refined_answer
+                rows = refined_rows
+            retrieval_plan["self_rag"] = {
+                "enabled": True,
+                "passes": 2,
+                "rewritten_query": rewritten_query,
+                "expanded_top_k": expanded_top_k,
+                "initial_confidence": retrieval_plan["self_rag"]["initial_confidence"],
+                "final_confidence": answer.get("confidence"),
+            }
+
+        answer["supporting_rows"] = answer.get("supporting_rows") or rows
+        answer["retrieval_plan"] = retrieval_plan
         return answer
 
     def _load_ready_dataset(self, dataset_id: str) -> DatasetMeta:
@@ -110,3 +145,14 @@ class DatasetRAGPipeline:
             raise SemanticDatasetError("Embeddings are not completed for this dataset. Run /api/embed first.")
         if not meta.embedding_index_name:
             raise SemanticDatasetError("Dataset embedding metadata is missing the Pinecone index name.")
+
+    def _should_retry_with_self_rag(self, answer: dict[str, Any], plan, rows: list[dict[str, Any]]) -> bool:
+        if not settings.SELF_RAG_ENABLED:
+            return False
+        if settings.SELF_RAG_MAX_RETRIES < 1:
+            return False
+        if not plan.use_semantic:
+            return False
+        if not rows:
+            return False
+        return float(answer.get("confidence") or 0.0) < settings.SELF_RAG_CONFIDENCE_THRESHOLD

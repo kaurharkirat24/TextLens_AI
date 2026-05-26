@@ -176,6 +176,8 @@ class QAResponse(BaseModel):
     strategy: Optional[str] = None
     analytics: Optional[dict[str, Any]] = None
     retrieval_plan: Optional[dict[str, Any]] = None
+    confidence: Optional[float] = None
+    confidence_rationale: Optional[str] = None
 
 
 class EmbeddingWorkerClaimResponse(BaseModel):

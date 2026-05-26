@@ -66,6 +66,7 @@ class QAService:
         try:
             llm_answer = self._llm_answer(question, rows, prompt_style, analytics)
             if llm_answer:
+                confidence = self.assess_confidence(question, llm_answer, rows, analytics)
                 logger.info("QA completed in llm mode using %s", settings.LLM_MODEL)
                 return {
                     "answer": llm_answer,
@@ -74,19 +75,51 @@ class QAService:
                     "intent": intent,
                     "strategy": strategy,
                     "analytics": analytics,
+                    "confidence": confidence.get("score", 0.0),
+                    "confidence_rationale": confidence.get("rationale", ""),
                 }
         except Exception:
             logger.exception("LLM QA failed; using deterministic fallback")
 
         logger.info("QA completed in fallback mode")
+        fallback_answer = self._fallback_answer(question, rows, analytics)
+        confidence = self.assess_confidence(question, fallback_answer, rows, analytics)
         return {
-            "answer": self._fallback_answer(question, rows, analytics),
+            "answer": fallback_answer,
             "supporting_rows": supporting_rows,
             "mode": "fallback",
             "intent": intent,
             "strategy": strategy,
             "analytics": analytics,
+            "confidence": confidence.get("score", 0.0),
+            "confidence_rationale": confidence.get("rationale", ""),
         }
+
+    def rewrite_query(self, question: str, rows: list[dict[str, Any]], intent: str) -> str:
+        rewritten = self._llm_rewrite_query(question, rows, intent)
+        if rewritten:
+            return rewritten.strip()
+        base = question.strip()
+        intent_hint = {
+            "trend": "focus on time-based patterns and date clues",
+            "comparison": "compare the strongest groups and categories",
+            "aggregation": "focus on measurable counts and frequencies",
+            "summarization": "summarize major themes and repeated signals",
+            "factual": "focus on exact mentions and direct evidence",
+        }.get(intent, "focus on the most relevant dataset evidence")
+        return f"{base}. {intent_hint}."
+
+    def assess_confidence(
+        self,
+        question: str,
+        answer: str,
+        rows: list[dict[str, Any]],
+        analytics: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        llm_assessment = self._llm_confidence_assessment(question, answer, rows, analytics)
+        if llm_assessment:
+            return llm_assessment
+        return _heuristic_confidence(answer, rows)
 
     def unrelated_answer(self, supported_topics: list[str] | None = None) -> dict[str, Any]:
         answer = "This question does not appear related to the uploaded dataset."
@@ -185,6 +218,91 @@ class QAService:
             self._gemini_client_key = settings.LLM_API_KEY
         return self._gemini_client_cache
 
+    def _llm_confidence_assessment(
+        self,
+        question: str,
+        answer: str,
+        rows: list[dict[str, Any]],
+        analytics: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not settings.LLM_ENABLED or not settings.LLM_PROVIDER:
+            return None
+        provider = settings.LLM_PROVIDER.strip().lower()
+        prompt = (
+            "Score confidence from 0 to 1 for whether the answer is supported by the evidence.\n"
+            "Return strict JSON with keys: score, rationale.\n"
+            f"Question: {question}\n\n"
+            f"Answer: {answer}\n\n"
+            f"Aggregate facts:\n{_compact_analytics_context(analytics)}\n\n"
+            f"Evidence rows:\n{_compact_row_context(rows)}\n"
+        )
+        try:
+            if provider == "gemini":
+                return self._gemini_json_eval(prompt)
+            if provider == "ollama":
+                return self._ollama_json_eval(prompt)
+        except Exception:
+            logger.exception("Confidence assessment failed; using heuristic fallback")
+        return None
+
+    def _llm_rewrite_query(self, question: str, rows: list[dict[str, Any]], intent: str) -> str | None:
+        if not settings.LLM_ENABLED or not settings.LLM_PROVIDER:
+            return None
+        provider = settings.LLM_PROVIDER.strip().lower()
+        prompt = (
+            "Rewrite this question for semantic retrieval over dataset rows.\n"
+            "Return one line only, no markdown, no explanation.\n"
+            f"Intent: {intent}\n"
+            f"Original question: {question}\n"
+            f"Current evidence rows:\n{_compact_row_context(rows)}\n"
+        )
+        try:
+            if provider == "gemini":
+                return self._gemini_text(prompt)
+            if provider == "ollama":
+                return self._ollama_text(prompt)
+        except Exception:
+            logger.exception("Query rewrite failed")
+        return None
+
+    def _gemini_text(self, prompt: str) -> str | None:
+        if not settings.LLM_API_KEY:
+            return None
+        from google import genai
+        from google.genai import types
+
+        client = self._gemini_client(genai)
+        response = client.models.generate_content(
+            model=settings.LLM_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.1),
+        )
+        text = (getattr(response, "text", "") or "").strip()
+        return text or None
+
+    def _gemini_json_eval(self, prompt: str) -> dict[str, Any] | None:
+        text = self._gemini_text(prompt)
+        return _parse_confidence_json(text)
+
+    def _ollama_text(self, prompt: str) -> str | None:
+        base_url = (settings.LLM_BASE_URL or settings.OLLAMA_BASE_URL).rstrip("/")
+        payload = {
+            "model": settings.LLM_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.1},
+        }
+        with httpx.Client(timeout=settings.LLM_TIMEOUT_SECONDS) as client:
+            response = client.post(f"{base_url}/api/generate", json=payload)
+            response.raise_for_status()
+            data = response.json()
+        content = (data.get("response") or "").strip()
+        return content or None
+
+    def _ollama_json_eval(self, prompt: str) -> dict[str, Any] | None:
+        text = self._ollama_text(prompt)
+        return _parse_confidence_json(text)
+
     def _fallback_answer(
         self,
         question: str,
@@ -239,6 +357,59 @@ class QAService:
             f"Frequent keywords: {keyword_summary}. "
             f"The strongest semantic match scored {top_score:.3f}."
         )
+
+
+def _parse_confidence_json(text: str | None) -> dict[str, Any] | None:
+    if not text:
+        return None
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        import json
+
+        payload = json.loads(match.group(0))
+        score = float(payload.get("score", 0.0))
+        score = max(0.0, min(1.0, score))
+        rationale = str(payload.get("rationale", "")).strip()
+        return {"score": score, "rationale": rationale or "LLM confidence assessment."}
+    except Exception:
+        return None
+
+
+def _heuristic_confidence(answer: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {"score": 0.2, "rationale": "No supporting rows were retrieved."}
+    score = 0.45
+    if len(rows) >= 5:
+        score += 0.2
+    top_score = max(float(row.get("score") or 0.0) for row in rows)
+    if top_score >= 0.8:
+        score += 0.2
+    if re.search(r"\b(insufficient|no relevant|not enough)\b", answer.lower()):
+        score -= 0.15
+    return {"score": max(0.0, min(1.0, score)), "rationale": "Heuristic confidence based on evidence coverage."}
+
+
+def _compact_row_context(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "No evidence rows supplied."
+    lines: list[str] = []
+    for row in rows[:8]:
+        metadata = row.get("metadata") or {}
+        row_id = metadata.get("row_id", row.get("id", "unknown"))
+        lines.append(f"Row {row_id}: {str(row.get('text') or '')[:320]}")
+    return "\n".join(lines)
+
+
+def _compact_analytics_context(analytics: dict[str, Any] | None) -> str:
+    if not analytics:
+        return "No aggregate facts supplied."
+    return (
+        f"rows={analytics.get('row_count_analyzed', 0)}; "
+        f"keywords={len(analytics.get('keywords') or [])}; "
+        f"sentiment_keys={list((analytics.get('sentiment_distribution') or {}).keys())[:5]}"
+    )
 def _supporting_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {

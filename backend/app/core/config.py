@@ -116,5 +116,22 @@ class Settings:
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "5"))
 
+    ADAPTIVE_TOP_K_ENABLED: bool = os.getenv("ADAPTIVE_TOP_K_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    ADAPTIVE_TOP_K_MIN: int = int(os.getenv("ADAPTIVE_TOP_K_MIN", "3"))
+    ADAPTIVE_TOP_K_MAX: int = int(os.getenv("ADAPTIVE_TOP_K_MAX", "10"))
+    SELF_RAG_ENABLED: bool = os.getenv("SELF_RAG_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    SELF_RAG_CONFIDENCE_THRESHOLD: float = float(os.getenv("SELF_RAG_CONFIDENCE_THRESHOLD", "0.65"))
+    SELF_RAG_MAX_RETRIES: int = int(os.getenv("SELF_RAG_MAX_RETRIES", "1"))
+
 
 settings = Settings()

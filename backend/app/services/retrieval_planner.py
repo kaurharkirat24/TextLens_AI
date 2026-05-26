@@ -16,13 +16,14 @@ class RetrievalPlan:
     use_semantic: bool
     use_analytics: bool
     rationale: str
+    complexity: str = "medium"
 
 
 class RetrievalPlanner:
     """Keep routing choices centralized and easy to tune."""
 
-    def plan(self, intent: QueryIntent, requested_top_k: int) -> RetrievalPlan:
-        top_k = max(1, min(requested_top_k, 10))
+    def plan(self, intent: QueryIntent, effective_top_k: int, complexity: str = "medium") -> RetrievalPlan:
+        top_k = max(1, min(effective_top_k, 10))
 
         if intent.intent == "aggregation":
             return RetrievalPlan(
@@ -33,6 +34,7 @@ class RetrievalPlanner:
                 use_semantic=False,
                 use_analytics=True,
                 rationale="Aggregate query should be answered from dataset-level counts and representative examples.",
+                complexity=complexity,
             )
         if intent.intent in {"trend", "comparison"}:
             return RetrievalPlan(
@@ -43,6 +45,7 @@ class RetrievalPlanner:
                 use_semantic=True,
                 use_analytics=True,
                 rationale="Grouped query benefits from analytics plus semantic examples.",
+                complexity=complexity,
             )
         if intent.intent == "summarization":
             return RetrievalPlan(
@@ -53,6 +56,7 @@ class RetrievalPlanner:
                 use_semantic=True,
                 use_analytics=True,
                 rationale="Broad summary should combine aggregate facts with representative rows.",
+                complexity=complexity,
             )
         if intent.intent == "factual":
             return RetrievalPlan(
@@ -63,6 +67,7 @@ class RetrievalPlanner:
                 use_semantic=True,
                 use_analytics=False,
                 rationale="Specific query should use concise semantic evidence.",
+                complexity=complexity,
             )
 
         return RetrievalPlan(
@@ -73,4 +78,5 @@ class RetrievalPlanner:
             use_semantic=True,
             use_analytics=False,
             rationale="Exploratory query should retrieve more examples for pattern finding.",
+            complexity=complexity,
         )

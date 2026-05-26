@@ -9,9 +9,11 @@ from typing import Any
 from app.services.analytics_qa_service import AnalyticsQAService, analytics_rows
 from app.services.dataset_relevance_service import DatasetRelevanceService
 from app.services.query_intent_service import QueryIntentClassifier
+from app.services.query_complexity_service import QueryComplexityService
 from app.services.retrieval_context import RetrievalContext
 from app.services.retrieval_planner import RetrievalPlan, RetrievalPlanner
 from app.services.structured_query_service import StructuredQueryService, StructuredResult
+from app.core.config import settings
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ class QueryRouter:
         self.intent_classifier = QueryIntentClassifier()
         self.relevance_service = DatasetRelevanceService()
         self.retrieval_planner = RetrievalPlanner()
+        self.complexity_service = QueryComplexityService()
         self.analytics_service = AnalyticsQAService()
         self.structured_query_service = StructuredQueryService()
 
@@ -77,7 +80,9 @@ class QueryRouter:
             )
 
         intent = self.intent_classifier.classify(question)
-        plan = self.retrieval_planner.plan(intent, requested_top_k)
+        complexity = self.complexity_service.assess(question, intent.intent)
+        effective_top_k = _effective_top_k(requested_top_k, intent.intent, complexity.level)
+        plan = self.retrieval_planner.plan(intent, effective_top_k, complexity.level)
         analytics = self.analytics_service.build_context(context, question, plan.intent) if plan.use_analytics else None
         rows = analytics_rows(analytics) if analytics else []
         logger.info(
@@ -99,5 +104,24 @@ class QueryRouter:
                 "rationale": plan.rationale,
                 "classifier_confidence": intent.confidence,
                 "classifier_rationale": intent.rationale,
+                "requested_top_k": requested_top_k,
+                "effective_top_k": plan.top_k,
+                "query_complexity": complexity.level,
+                "query_complexity_score": complexity.score,
+                "query_complexity_rationale": complexity.rationale,
             },
         )
+
+
+def _effective_top_k(requested_top_k: int, intent: str, complexity: str) -> int:
+    bounded = max(1, min(requested_top_k, 10))
+    if not settings.ADAPTIVE_TOP_K_ENABLED:
+        return bounded
+
+    min_k = max(1, min(settings.ADAPTIVE_TOP_K_MIN, 10))
+    max_k = max(min_k, min(settings.ADAPTIVE_TOP_K_MAX, 10))
+    if complexity == "simple" and intent in {"factual", "structured_query"}:
+        return min(max(min_k, 3), bounded)
+    if complexity == "complex" or intent in {"trend", "comparison", "summarization"}:
+        return min(max_k, max(bounded, 8))
+    return min(max_k, max(min_k, bounded))
