@@ -172,6 +172,10 @@ class QAResponse(BaseModel):
     answer: str
     supporting_rows: list[SearchResult]
     mode: str
+    intent: Optional[str] = None
+    strategy: Optional[str] = None
+    analytics: Optional[dict[str, Any]] = None
+    retrieval_plan: Optional[dict[str, Any]] = None
 
 
 class EmbeddingWorkerClaimResponse(BaseModel):

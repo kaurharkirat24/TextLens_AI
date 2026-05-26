@@ -242,6 +242,8 @@ export default function QAPage() {
       addLog(result.mode === 'llm' ? 'success' : 'warn', `QA completed in ${result.mode} mode`, {
         elapsed_ms: elapsedMs,
         supporting_rows: result.supporting_rows?.length || 0,
+        intent: result.intent,
+        strategy: result.strategy,
       });
     } catch (err) {
       const message = readError(err, 'QA failed.');
@@ -484,6 +486,7 @@ function AnswerPanel({ result, answering }) {
     <section className="qa-answer card">
       <div className="qa-answer-header">
         <span className={`qa-mode qa-mode--${result.mode}`}>{result.mode}</span>
+        {result.strategy && <span className="qa-mode qa-mode--strategy">{result.strategy}</span>}
         <span>{result.supporting_rows?.length || 0} rows</span>
       </div>
       <p>{result.answer}</p>

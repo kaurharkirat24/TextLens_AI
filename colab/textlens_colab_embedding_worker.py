@@ -24,6 +24,9 @@ EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2"
 EMBEDDING_BATCH_SIZE = int(os.environ.get("EMBEDDING_BATCH_SIZE", "512"))
 PINECONE_UPSERT_BATCH_SIZE = int(os.environ.get("PINECONE_UPSERT_BATCH_SIZE", "500"))
 PROGRESS_EVERY_BATCHES = int(os.environ.get("PROGRESS_EVERY_BATCHES", "2"))
+POST_RETRY_ATTEMPTS = int(os.environ.get("TEXTLENS_POST_RETRY_ATTEMPTS", "5"))
+POST_RETRY_BASE_DELAY_SECONDS = float(os.environ.get("TEXTLENS_POST_RETRY_BASE_DELAY_SECONDS", "2"))
+TRANSIENT_STATUS_CODES = {429, 502, 503, 504}
 
 
 def main() -> None:
@@ -52,7 +55,7 @@ def main() -> None:
 
     chunks_path = _download_chunks(session, dataset_id, chunk_url)
     model = SentenceTransformer(model_name, device="cuda")
-    actual_dimension = int(model.get_sentence_embedding_dimension())
+    actual_dimension = int(model.get_embedding_dimension())
     if dimension and actual_dimension != dimension:
         raise RuntimeError(f"Model dimension {actual_dimension} does not match backend dimension {dimension}")
 
@@ -212,17 +215,20 @@ def _progress(
     dimension: int,
     index_name: str,
 ) -> None:
-    _post(
-        session,
-        f"/workers/embedding/jobs/{dataset_id}/progress",
-        {
-            "processed_chunks": processed,
-            "total_chunks": total,
-            "dimension": dimension,
-            "index_name": index_name,
-            "message": "Colab GPU worker progress",
-        },
-    )
+    try:
+        _post(
+            session,
+            f"/workers/embedding/jobs/{dataset_id}/progress",
+            {
+                "processed_chunks": processed,
+                "total_chunks": total,
+                "dimension": dimension,
+                "index_name": index_name,
+                "message": "Colab GPU worker progress",
+            },
+        )
+    except requests.RequestException as exc:
+        print(f"Warning: progress update failed for dataset={dataset_id} processed={processed}: {exc}")
 
 
 def _complete(
@@ -248,13 +254,40 @@ def _complete(
 
 
 def _fail(session: requests.Session, dataset_id: str, error: str) -> None:
-    _post(session, f"/workers/embedding/jobs/{dataset_id}/fail", {"error": error})
+    try:
+        _post(session, f"/workers/embedding/jobs/{dataset_id}/fail", {"error": error})
+    except requests.RequestException as exc:
+        print(f"Warning: failed to report worker error for dataset={dataset_id}: {exc}")
 
 
 def _post(session: requests.Session, path: str, payload: dict):
-    response = session.post(f"{BACKEND_URL}/api{path}", json=payload, timeout=120)
-    response.raise_for_status()
-    return response
+    url = f"{BACKEND_URL}/api{path}"
+    last_error: Exception | None = None
+    for attempt in range(1, POST_RETRY_ATTEMPTS + 1):
+        try:
+            response = session.post(url, json=payload, timeout=120)
+            if response.status_code in TRANSIENT_STATUS_CODES and attempt < POST_RETRY_ATTEMPTS:
+                delay = POST_RETRY_BASE_DELAY_SECONDS * attempt
+                print(
+                    f"Transient backend response status={response.status_code} "
+                    f"path={path} attempt={attempt}/{POST_RETRY_ATTEMPTS} retry_in={delay:.1f}s"
+                )
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= POST_RETRY_ATTEMPTS:
+                break
+            delay = POST_RETRY_BASE_DELAY_SECONDS * attempt
+            print(
+                f"Transient backend request failure path={path} "
+                f"attempt={attempt}/{POST_RETRY_ATTEMPTS} retry_in={delay:.1f}s error={exc}"
+            )
+            time.sleep(delay)
+    assert last_error is not None
+    raise last_error
 
 
 if __name__ == "__main__":

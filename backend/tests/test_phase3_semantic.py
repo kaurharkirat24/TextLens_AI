@@ -4,17 +4,22 @@ import asyncio
 from fastapi import HTTPException
 from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from app.main import app
+from app.models.schemas import DatasetMeta
 from app.routers.semantic import _ACTIVE_EMBEDDING_JOBS, _start_embedding_job, _top_k
 from app.core.config import settings
 from app.services import dataset_manager
 from app.services.dataset_manager import create_dataset, update_dataset
 from app.services.embedding_service import EmbeddingServiceError, get_embedding_service
 from app.services.qa_service import QAService
-from app.services.semantic_dataset_service import build_metadata, mark_embedding_started
+from app.services.query_intent_service import QueryIntentClassifier
+from app.services.retrieval_planner import RetrievalPlanner
+from app.services.semantic_dataset_service import build_metadata, build_row_text, mark_embedding_started
+from app.services.structured_query_service import StructuredQueryService
 from app.services.vector_store_service import PineconeVectorStore
 
 
@@ -37,7 +42,10 @@ def test_build_metadata_uses_required_shape_and_roles():
 
     metadata = build_metadata("dataset123", 7, "Great tutorial", row, analysis)
 
-    assert metadata == {
+    assert {
+        key: metadata[key]
+        for key in ("dataset_id", "row_id", "text", "source", "sentiment", "engagement", "timestamp")
+    } == {
         "dataset_id": "dataset123",
         "row_id": 7,
         "text": "Great tutorial",
@@ -46,6 +54,84 @@ def test_build_metadata_uses_required_shape_and_roles():
         "engagement": 6.0,
         "timestamp": "2026-05-01 10:00:00",
     }
+    assert metadata["col_commenttext"] == "Great tutorial"
+    assert metadata["col_likes"] == "4"
+
+
+def test_build_row_text_preserves_structured_movie_fields():
+    row = {
+        "title": "Sankofa",
+        "director": "Haile Gerima",
+        "rating": "TV-MA",
+        "duration": "125 min",
+        "description": "An American model slips back in time.",
+    }
+
+    text = build_row_text(row, {"column_roles": {"primary_text": "description"}}, "description")
+
+    assert "Title: Sankofa" in text
+    assert "Director: Haile Gerima" in text
+    assert "Rating: TV-MA" in text
+    assert "Duration: 125 min" in text
+    assert "Description: An American model slips back in time." in text
+
+
+def test_structured_query_answers_movie_lookup_and_filters(tmp_path):
+    csv_path = tmp_path / "movies.csv"
+    pd.DataFrame(
+        [
+            {
+                "show_id": "s1",
+                "type": "Movie",
+                "title": "Dick Johnson Is Dead",
+                "director": "Kirsten Johnson",
+                "rating": "PG-13",
+                "duration": "90 min",
+                "description": "A filmmaker stages her father's death.",
+            },
+            {
+                "show_id": "s8",
+                "type": "Movie",
+                "title": "Sankofa",
+                "director": "Haile Gerima",
+                "rating": "TV-MA",
+                "duration": "125 min",
+                "description": "An American model slips back in time.",
+            },
+            {
+                "show_id": "s10",
+                "type": "Movie",
+                "title": "The Starling",
+                "director": "Theodore Melfi",
+                "rating": "PG-13",
+                "duration": "104 min",
+                "description": "A woman adjusts to life after loss.",
+            },
+        ]
+    ).to_csv(csv_path, index=False)
+    meta = DatasetMeta(
+        id="movies",
+        original_filename="movies.csv",
+        uploaded_at=datetime.now(timezone.utc),
+        clean_csv_path=str(csv_path),
+    )
+
+    service = StructuredQueryService()
+
+    directed = service.answer(meta, "Who directed Sankofa?", top_k=5)
+    assert directed is not None
+    assert directed.answer == "Sankofa's director is Haile Gerima."
+    assert directed.plan["strategy"] == "dataframe_lookup"
+
+    pg13 = service.answer(meta, "Find PG-13 movies.", top_k=5)
+    assert pg13 is not None
+    assert "Found 2 row(s) where rating is PG-13." in pg13.answer
+    assert [row["metadata"]["title"] for row in pg13.rows] == ["Dick Johnson Is Dead", "The Starling"]
+
+    under_100 = service.answer(meta, "Which movies are under 100 minutes?", top_k=5)
+    assert under_100 is not None
+    assert "Found 1 row(s) with duration < 100 minutes." in under_100.answer
+    assert under_100.rows[0]["metadata"]["title"] == "Dick Johnson Is Dead"
 
 
 def test_top_k_is_capped_at_ten():
@@ -83,6 +169,23 @@ def test_qa_fallback_returns_supporting_rows_and_mode(monkeypatch):
     assert response["supporting_rows"] == rows
     assert "Sentiment distribution" in response["answer"]
     assert "automation" in response["answer"]
+
+
+def test_query_intent_classifier_detects_aggregation():
+    intent = QueryIntentClassifier().classify("What are the most frequent topics discussed in the comments?")
+
+    assert intent.intent == "aggregation"
+    assert intent.confidence >= 0.8
+
+
+def test_retrieval_planner_routes_aggregation_to_analytics():
+    intent = QueryIntentClassifier().classify("Most common issues?")
+    plan = RetrievalPlanner().plan(intent, requested_top_k=10)
+
+    assert plan.strategy == "analytics"
+    assert plan.use_analytics is True
+    assert plan.use_semantic is False
+    assert plan.top_k == 5
 
 
 def test_search_contract_requires_dataset_id():
