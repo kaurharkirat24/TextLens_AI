@@ -11,6 +11,7 @@ from app.services.qa_service import QAService
 from app.services.query_router import QueryRouter
 from app.services.retrieval_context import RetrievalContext
 from app.services.semantic_retriever import SemanticRetriever
+from app.services.semantic_cache import get_semantic_cache
 from app.services.semantic_dataset_service import SemanticDatasetError, load_semantic_dataset
 from app.core.config import settings
 
@@ -30,6 +31,7 @@ class DatasetRAGPipeline:
         self.qa_service = QAService()
         self.query_router = QueryRouter()
         self.semantic_retriever = SemanticRetriever()
+        self.semantic_cache = get_semantic_cache()
 
     def search(self, dataset_id: str, query: str, top_k: int) -> list[dict[str, Any]]:
         """Embed the user query with MiniLM and retrieve matching Pinecone chunks."""
@@ -39,9 +41,14 @@ class DatasetRAGPipeline:
 
         meta = self._load_ready_dataset(dataset_id)
         self.semantic_retriever.validate_embedding_contract(meta)
+        query_embedding = self.semantic_retriever.embed_query(cleaned_query)
+        cached = self.semantic_cache.get(dataset_id, "search", top_k, query_embedding)
+        if cached is not None:
+            logger.info("Semantic cache hit for search dataset_id=%s", dataset_id)
+            return cached
 
         start = time.perf_counter()
-        filtered = self.semantic_retriever.search(meta, dataset_id, cleaned_query, top_k)
+        filtered = self.semantic_retriever.search_by_embedding(meta, dataset_id, query_embedding, top_k)
         elapsed_ms = (time.perf_counter() - start) * 1000
         logger.info(
             "Dataset RAG retrieval completed dataset_id=%s model=%s dimension=%s results=%s in %.1f ms",
@@ -51,6 +58,7 @@ class DatasetRAGPipeline:
             len(filtered),
             elapsed_ms,
         )
+        self.semantic_cache.put(dataset_id, "search", top_k, query_embedding, filtered)
         return filtered
 
     def answer(self, dataset_id: str, question: str, top_k: int) -> dict[str, Any]:
@@ -58,6 +66,14 @@ class DatasetRAGPipeline:
         cleaned_question = question.strip()
         if not cleaned_question:
             raise SemanticDatasetError("Question cannot be empty")
+        question_embedding = self.semantic_retriever.embed_query(cleaned_question)
+        cached_answer = self.semantic_cache.get(dataset_id, "qa", top_k, question_embedding)
+        if cached_answer is not None:
+            cached_copy = dict(cached_answer)
+            plan = dict(cached_copy.get("retrieval_plan") or {})
+            plan["semantic_cache"] = {"hit": True}
+            cached_copy["retrieval_plan"] = plan
+            return cached_copy
 
         context = RetrievalContext.load(dataset_id)
         routed = self.query_router.route(context, cleaned_question, top_k)
@@ -86,7 +102,12 @@ class DatasetRAGPipeline:
         if plan.use_semantic:
             self._ensure_ready_for_semantic(context.meta)
             self.semantic_retriever.validate_embedding_contract(context.meta)
-            semantic_rows = self.semantic_retriever.search(context.meta, dataset_id, cleaned_question, plan.top_k)
+            semantic_rows = self.semantic_retriever.search_by_embedding(
+                context.meta,
+                dataset_id,
+                question_embedding,
+                plan.top_k,
+            )
             semantic_ids = {item.get("id") for item in semantic_rows}
             rows = semantic_rows + [row for row in rows if row.get("id") not in semantic_ids]
 
@@ -99,6 +120,7 @@ class DatasetRAGPipeline:
             analytics=routed.analytics,
         )
         retrieval_plan = dict(routed.retrieval_plan)
+        retrieval_plan["semantic_cache"] = {"hit": False}
         retrieval_plan["self_rag"] = {
             "enabled": settings.SELF_RAG_ENABLED,
             "passes": 1,
@@ -133,6 +155,7 @@ class DatasetRAGPipeline:
 
         answer["supporting_rows"] = answer.get("supporting_rows") or rows
         answer["retrieval_plan"] = retrieval_plan
+        self.semantic_cache.put(dataset_id, "qa", top_k, question_embedding, dict(answer))
         return answer
 
     def _load_ready_dataset(self, dataset_id: str) -> DatasetMeta:

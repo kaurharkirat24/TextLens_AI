@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.core.config import settings
+from app.services.hyde_service import HyDEService
 from app.models.schemas import DatasetMeta
 from app.services.embedding_service import get_embedding_service
 from app.services.vector_store_service import PineconeVectorStore, VectorStoreError
@@ -13,9 +14,17 @@ class SemanticRetriever:
 
     def __init__(self) -> None:
         self._embedding_service = None
+        self._hyde_service = HyDEService()
 
     def search(self, meta: DatasetMeta, dataset_id: str, query: str, top_k: int) -> list[dict]:
-        query_embedding = self.embedding_service.embed_query(query)
+        query_embedding = self.embed_query(query)
+        return self.search_by_embedding(meta, dataset_id, query_embedding, top_k)
+
+    def embed_query(self, query: str) -> list[float]:
+        expanded_query = self._hyde_service.expand(query)
+        return self.embedding_service.embed_query(expanded_query)
+
+    def search_by_embedding(self, meta: DatasetMeta, dataset_id: str, query_embedding: list[float], top_k: int) -> list[dict]:
         self._validate_query_dimension(meta.embedding_dimension, len(query_embedding))
         results = PineconeVectorStore(index_name=meta.embedding_index_name).query(
             query_embedding,
