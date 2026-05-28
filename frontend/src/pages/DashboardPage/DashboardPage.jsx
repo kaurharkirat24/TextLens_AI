@@ -431,11 +431,13 @@ function KeyInsights({ insights }) {
 }
 
 function ChartCard({ chart }) {
+  // Strip out the mention of "grouped by countrycode" if it exists in the subtitle
+  const subtitle = chart.subtitle?.replace(/grouped by countrycode/i, '')?.trim();
   return (
     <article className="chart-card card">
       <div className="chart-card-header">
         <h2>{chart.title || 'Untitled chart'}</h2>
-        {chart.subtitle && <p>{chart.subtitle}</p>}
+        {subtitle && <p>{subtitle}</p>}
       </div>
       <DynamicChart chart={chart} />
     </article>
@@ -673,9 +675,6 @@ function WorldMapView({ chart, data }) {
             <span className="world-map-pct">{item.percentage}%</span>
           </div>
         ))}
-        {data.length > 5 && (
-          <button className="btn-link">View all locations &rsaquo;</button>
-        )}
       </div>
       <div className="world-map-visual">
         <ComposableMap projectionConfig={{ scale: 140 }} width={400} height={200} style={{ width: "100%", height: "100%" }}>
