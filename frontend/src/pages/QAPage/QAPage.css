@@ -34,7 +34,8 @@
   align-items: end;
   gap: var(--space-md);
   padding: var(--space-lg) !important;
-  background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(18,20,31,0.95)) !important;
+  background: var(--color-bg-card) !important;
+  border: 1px solid var(--color-border);
 }
 
 .qa-field {
@@ -141,7 +142,6 @@
   line-height: 1.25;
   text-overflow: ellipsis;
   text-transform: capitalize;
-  white-space: nowrap;
 }
 
 .qa-status-tile--success {
@@ -168,7 +168,7 @@
 
 .qa-workbench {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
+  grid-template-columns: 1fr;
   gap: var(--space-lg);
   align-items: start;
 }
@@ -214,9 +214,9 @@
 }
 
 .qa-panel-icon--search {
-  border: 1px solid rgba(96, 165, 250, 0.22);
-  background: rgba(96, 165, 250, 0.08);
-  color: #93c5fd;
+  border: 1px solid rgba(164, 22, 26, 0.22);
+  background: rgba(164, 22, 26, 0.08);
+  color: var(--color-accent);
 }
 
 .qa-panel-icon--qa {
@@ -306,7 +306,8 @@
   gap: var(--space-sm);
   padding: var(--space-md) !important;
   border-radius: 8px !important;
-  background: #111521 !important;
+  background: var(--color-bg-card) !important;
+  border: 1px solid var(--color-border);
 }
 
 .qa-result-topline {
@@ -356,7 +357,6 @@
   font-size: 0.74rem;
   padding: 3px 8px;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .qa-meta-pill em {
@@ -461,7 +461,6 @@
   font-family: var(--font-mono);
   font-size: 0.72rem;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .qa-log-entry--success strong {

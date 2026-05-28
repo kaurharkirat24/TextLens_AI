@@ -41,6 +41,11 @@
   overflow: hidden;
 }
 
+.drop-zone > * {
+  position: relative;
+  z-index: 1;
+}
+
 .drop-zone::before {
   content: '';
   position: absolute;
@@ -150,7 +155,7 @@
   align-items: flex-start;
   gap: var(--space-md);
   color: var(--color-error);
-  border-color: rgba(248, 113, 113, 0.3);
+  border-color: rgba(164, 22, 26, 0.3);
   background: var(--color-error-bg);
   margin-top: var(--space-lg);
 }
@@ -191,13 +196,31 @@
 .result-banner--success {
   background: var(--color-success-bg);
   color: var(--color-success);
-  border: 1px solid rgba(52, 211, 153, 0.2);
+  border: 1px solid rgba(22, 26, 29, 0.2);
 }
 
 .result-banner--error {
   background: var(--color-error-bg);
   color: var(--color-error);
-  border: 1px solid rgba(248, 113, 113, 0.2);
+  border: 1px solid rgba(164, 22, 26, 0.2);
+}
+
+/* ── Toast ──────────────────────────────────────────────────────────────── */
+
+.upload-toast {
+  position: fixed;
+  bottom: var(--space-xl);
+  right: var(--space-xl);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(22, 26, 29, 0.2);
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  z-index: 1000;
+  box-shadow: var(--shadow-md);
 }
 
 .result-banner strong {
@@ -365,7 +388,6 @@
   font-size: 0.92rem;
   font-weight: 650;
   line-height: 1.35;
-  overflow-wrap: anywhere;
 }
 
 .insight-item--accent {
@@ -437,11 +459,8 @@
 }
 
 .issue-message {
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 

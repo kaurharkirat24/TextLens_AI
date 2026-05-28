@@ -11,13 +11,11 @@ import {
   MessageSquareText,
   Play,
   RefreshCw,
-  Search,
   Send,
   ShieldCheck,
-  TerminalSquare,
   Zap,
 } from 'lucide-react';
-import { askDatasetQuestion, embedDataset, getDatasets, searchDataset } from '../../services/api';
+import { askDatasetQuestion, embedDataset, getDatasets } from '../../services/api';
 import './QAPage.css';
 
 const SELECTED_DATASET_KEY = 'textlens:selectedDatasetId';
@@ -28,27 +26,14 @@ export default function QAPage() {
   const [selectedId, setSelectedId] = useState('');
   const [loadingDatasets, setLoadingDatasets] = useState(true);
   const [embedding, setEmbedding] = useState(false);
-  const [searching, setSearching] = useState(false);
   const [answering, setAnswering] = useState(false);
   const [error, setError] = useState('');
   const [embedResult, setEmbedResult] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
   const [question, setQuestion] = useState('');
   const [topK, setTopK] = useState(DEFAULT_TOP_K);
-  const [searchResults, setSearchResults] = useState([]);
   const [qaResult, setQaResult] = useState(null);
-  const [logs, setLogs] = useState([]);
 
   const addLog = useCallback((level, message, details = null) => {
-    const entry = {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      level,
-      message,
-      details,
-    };
-    setLogs((current) => [entry, ...current].slice(0, 18));
-
     const logger = level === 'error' ? console.error : level === 'warn' ? console.warn : console.info;
     logger(`[TextLens Phase 3] ${message}`, details || '');
   }, []);
@@ -140,7 +125,6 @@ export default function QAPage() {
   const handleDatasetChange = (datasetId) => {
     setSelectedId(datasetId);
     setEmbedResult(null);
-    setSearchResults([]);
     setQaResult(null);
     setError('');
     if (datasetId) {
@@ -176,7 +160,6 @@ export default function QAPage() {
       const result = await embedDataset(selectedId);
       const elapsedMs = Math.round(performance.now() - startedAt);
       setEmbedResult(result);
-      setSearchResults([]);
       setQaResult(null);
       await refreshDatasets();
 
@@ -198,32 +181,7 @@ export default function QAPage() {
     }
   };
 
-  const runSearch = async (event) => {
-    event?.preventDefault();
-    if (!canUseSemantic || !searchQuery.trim()) return;
 
-    setSearching(true);
-    setError('');
-    addLog('info', 'Semantic search started', { dataset_id: selectedId, top_k: topK });
-
-    try {
-      const startedAt = performance.now();
-      const result = await searchDataset(selectedId, searchQuery.trim(), topK);
-      const elapsedMs = Math.round(performance.now() - startedAt);
-      setSearchResults(result.results || []);
-      addLog('success', 'Semantic search completed', {
-        elapsed_ms: elapsedMs,
-        matches: result.results?.length || 0,
-        namespace: selectedId,
-      });
-    } catch (err) {
-      const message = readError(err, 'Search failed.');
-      setError(message);
-      addLog('error', message, err.response?.data || null);
-    } finally {
-      setSearching(false);
-    }
-  };
 
   const runQA = async (event) => {
     event?.preventDefault();
@@ -280,7 +238,7 @@ export default function QAPage() {
             <select
               value={selectedId}
               onChange={(event) => handleDatasetChange(event.target.value)}
-              disabled={loadingDatasets || embedding || searching || answering}
+              disabled={loadingDatasets || embedding || answering}
             >
               <option value="">Select a dataset</option>
               {datasets.map((dataset) => (
@@ -302,7 +260,7 @@ export default function QAPage() {
             <select
               value={topK}
               onChange={(event) => setTopK(Number(event.target.value))}
-              disabled={embedding || searching || answering}
+              disabled={embedding || answering}
             >
               {[3, 5, 8, 10].map((value) => (
                 <option key={value} value={value}>
@@ -352,30 +310,7 @@ export default function QAPage() {
       </section>
 
       <section className="qa-workbench">
-        <div className="qa-column">
-          <form className="qa-panel card" onSubmit={runSearch}>
-            <div className="qa-panel-header">
-              <span className="qa-panel-icon qa-panel-icon--search">
-                <Search size={17} />
-              </span>
-              <h2>Search</h2>
-            </div>
-            <div className="qa-input-row">
-              <input
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search retrieved meaning"
-                disabled={!canUseSemantic || searching}
-              />
-              <button className="btn btn-secondary" type="submit" disabled={!canUseSemantic || !searchQuery.trim() || searching}>
-                {searching ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                Search
-              </button>
-            </div>
-          </form>
 
-          <ResultsList title="Search results" rows={searchResults} emptyIcon={Search} emptyText="No matches yet." />
-        </div>
 
         <div className="qa-column">
           <form className="qa-panel card" onSubmit={runQA}>
@@ -405,25 +340,6 @@ export default function QAPage() {
         </div>
       </section>
 
-      <section className="qa-log card">
-        <div className="qa-log-header">
-          <TerminalSquare size={17} />
-          <h2>Operation Log</h2>
-        </div>
-        {logs.length === 0 ? (
-          <p className="qa-log-empty">No events yet.</p>
-        ) : (
-          <div className="qa-log-list">
-            {logs.map((entry) => (
-              <article className={`qa-log-entry qa-log-entry--${entry.level}`} key={entry.id}>
-                <span>{entry.time}</span>
-                <strong>{entry.message}</strong>
-                {entry.details && <code>{compactJson(entry.details)}</code>}
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
     </main>
   );
 }

@@ -7,37 +7,37 @@
 /* ── CSS Variables ──────────────────────────────────────────────────────── */
 :root {
   /* Palette */
-  --color-bg:            #0b0d14;
-  --color-bg-card:       #12141f;
-  --color-bg-card-hover: #181b28;
-  --color-bg-sidebar:    #0e1019;
-  --color-bg-input:      #161927;
-  --color-border:        #1e2235;
-  --color-border-focus:  #4f6ef7;
+  --color-bg:            #f5f3f4;
+  --color-bg-card:       #ffffff;
+  --color-bg-card-hover: #f5f3f4;
+  --color-bg-sidebar:    #0b090a;
+  --color-bg-input:      #ffffff;
+  --color-border:        #d3d3d3;
+  --color-border-focus:  #a4161a;
 
-  --color-text:          #e4e6f0;
-  --color-text-muted:    #8b90a8;
-  --color-text-dim:      #5a5f78;
+  --color-text:          #161a1d;
+  --color-text-muted:    #660708;
+  --color-text-dim:      #b1a7a6;
 
   /* Accent */
-  --color-accent:        #4f6ef7;
-  --color-accent-hover:  #6580ff;
-  --color-accent-glow:   rgba(79, 110, 247, 0.15);
+  --color-accent:        #a4161a;
+  --color-accent-hover:  #660708;
+  --color-accent-glow:   rgba(164, 22, 26, 0.15);
 
   /* Semantic */
-  --color-success:       #34d399;
-  --color-success-bg:    rgba(52, 211, 153, 0.10);
-  --color-warning:       #fbbf24;
-  --color-warning-bg:    rgba(251, 191, 36, 0.10);
-  --color-error:         #f87171;
-  --color-error-bg:      rgba(248, 113, 113, 0.10);
-  --color-info:          #60a5fa;
-  --color-info-bg:       rgba(96, 165, 250, 0.10);
+  --color-success:       #161a1d;
+  --color-success-bg:    rgba(22, 26, 29, 0.10);
+  --color-warning:       #b1a7a6;
+  --color-warning-bg:    rgba(177, 167, 166, 0.15);
+  --color-error:         #a4161a;
+  --color-error-bg:      rgba(164, 22, 26, 0.10);
+  --color-info:          #660708;
+  --color-info-bg:       rgba(102, 7, 8, 0.10);
 
   /* Gradients */
-  --gradient-brand:      linear-gradient(135deg, #4f6ef7 0%, #a855f7 100%);
-  --gradient-card:       linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
-  --gradient-glow:       radial-gradient(600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(79,110,247,0.06), transparent 40%);
+  --gradient-brand:      linear-gradient(135deg, #a4161a 0%, #660708 100%);
+  --gradient-card:       linear-gradient(180deg, #ffffff 0%, #f5f3f4 100%);
+  --gradient-glow:       radial-gradient(600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(164, 22, 26, 0.06), transparent 40%);
 
   /* Typography */
   --font-sans:           'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -160,7 +160,6 @@ input, textarea, select {
   font-weight: 500;
   font-size: 0.875rem;
   transition: all var(--transition-fast);
-  white-space: nowrap;
 }
 
 .btn:disabled {
