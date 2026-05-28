@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.services.dataset_manager import get_dataset, update_dataset
 from app.services.analysis_pipeline import load_csv, run_analysis, save_analysis_results
+from app.services.dataset_profile_service import DatasetProfileService
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 logger = logging.getLogger(__name__)
@@ -62,13 +63,18 @@ async def analyze_dataset(dataset_id: str):
 
         # Save results to disk for later retrieval
         analysis_path = save_analysis_results(results, settings.OUTPUT_DIR, dataset_id)
+        clean_path = results.get("clean_dataset_path") or meta.clean_csv_path
+        if clean_path and os.path.exists(clean_path):
+            profile_df = load_csv(clean_path)
+            profile = DatasetProfileService().build(dataset_id, results, profile_df)
+            DatasetProfileService().save(dataset_id, profile, settings.OUTPUT_DIR)
 
         # Update dataset status
         update_dataset(
             dataset_id,
             status="analyzed",
             analysis_path=analysis_path,
-            clean_csv_path=results.get("clean_dataset_path") or meta.clean_csv_path,
+            clean_csv_path=clean_path,
             clean_rows=results.get("stats", {}).get("total_rows_after_cleaning", meta.clean_rows),
             embedding_status="not_started",
             embedding_model=None,

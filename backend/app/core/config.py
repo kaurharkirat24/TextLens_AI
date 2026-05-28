@@ -116,5 +116,39 @@ class Settings:
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
     LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "5"))
 
+    ADAPTIVE_TOP_K_ENABLED: bool = os.getenv("ADAPTIVE_TOP_K_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    ADAPTIVE_TOP_K_MIN: int = int(os.getenv("ADAPTIVE_TOP_K_MIN", "3"))
+    ADAPTIVE_TOP_K_MAX: int = int(os.getenv("ADAPTIVE_TOP_K_MAX", "10"))
+    SELF_RAG_ENABLED: bool = os.getenv("SELF_RAG_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    SELF_RAG_CONFIDENCE_THRESHOLD: float = float(os.getenv("SELF_RAG_CONFIDENCE_THRESHOLD", "0.65"))
+    SELF_RAG_MAX_RETRIES: int = int(os.getenv("SELF_RAG_MAX_RETRIES", "1"))
+    HYDE_ENABLED: bool = os.getenv("HYDE_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    HYDE_MAX_QUERY_TOKENS: int = int(os.getenv("HYDE_MAX_QUERY_TOKENS", "8"))
+    HYDE_PROMPT_MAX_CHARS: int = int(os.getenv("HYDE_PROMPT_MAX_CHARS", "500"))
+    SEMANTIC_CACHE_ENABLED: bool = os.getenv("SEMANTIC_CACHE_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    SEMANTIC_CACHE_MAX_ENTRIES: int = int(os.getenv("SEMANTIC_CACHE_MAX_ENTRIES", "512"))
+    SEMANTIC_CACHE_TTL_SECONDS: int = int(os.getenv("SEMANTIC_CACHE_TTL_SECONDS", "900"))
+    SEMANTIC_CACHE_SIMILARITY_THRESHOLD: float = float(os.getenv("SEMANTIC_CACHE_SIMILARITY_THRESHOLD", "0.94"))
+
 
 settings = Settings()

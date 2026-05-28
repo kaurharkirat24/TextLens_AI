@@ -223,9 +223,6 @@ class IngestionPipeline:
 
         analysis = _load_analysis(self.meta, self.dataset_id)
         primary_text_col = (analysis.get("column_roles") or {}).get("primary_text") or self.meta.text_column
-        
-        if not primary_text_col:
-            raise SemanticDatasetError("Primary text column not identified.")
 
         logger.info("Starting chunking for dataset %s", self.dataset_id)
         chunks_path = self.storage["chunks"] / f"{self.dataset_id}_chunks.jsonl"
@@ -239,7 +236,7 @@ class IngestionPipeline:
             for df_chunk in chunk_iter:
                 records = df_chunk.to_dict("records")
                 for idx, row in zip(df_chunk.index, records):
-                    text = str(row.get(primary_text_col, "") or "").strip()
+                    text = build_row_text(row, analysis, primary_text_col)
                     if not text:
                         continue
 
@@ -706,6 +703,7 @@ class IngestionPipeline:
             "chunk_overlap_sentences": settings.CHUNK_OVERLAP_SENTENCES,
             "min_chunk_words": settings.MIN_CHUNK_WORDS,
             "max_chunk_words": settings.MAX_CHUNK_WORDS,
+            "chunk_format": "structured_row_v2",
         }
 
     def _manifest_matches(self, manifest_path: Path) -> bool:
@@ -890,7 +888,7 @@ def build_metadata(
             if fallback in row:
                 engagement += _to_number(row[fallback])
 
-    return {
+    metadata = {
         "dataset_id": dataset_id,
         "row_id": int(row_id),
         "text": text,
@@ -899,6 +897,101 @@ def build_metadata(
         "engagement": engagement,
         "timestamp": _clean_scalar(row.get(timestamp_col, "")) if timestamp_col else "",
     }
+    metadata.update(_structured_metadata(row))
+    return metadata
+
+
+def build_row_text(row: pd.Series | dict, analysis: dict[str, Any], primary_text_col: str | None = None) -> str:
+    """Render a CSV row as embedding text that preserves structured fields."""
+    roles = analysis.get("column_roles") if isinstance(analysis, dict) else {}
+    roles = roles or {}
+    content_roles = roles.get("content") or {}
+
+    preferred = [
+        "title",
+        "name",
+        "type",
+        content_roles.get("title"),
+        content_roles.get("id"),
+        "director",
+        "creator",
+        "cast",
+        "country",
+        "release_year",
+        "year",
+        "rating",
+        "duration",
+        "listed_in",
+        "genre",
+        "category",
+        primary_text_col,
+        "description",
+        "text",
+        "comment",
+        "review",
+        "feedback",
+    ]
+    ordered_columns = _ordered_columns(row, preferred)
+    lines = []
+    for column in ordered_columns:
+        value = _clean_scalar(row.get(column, ""))
+        if value:
+            lines.append(f"{_humanize_column(column)}: {value}")
+    return "\n".join(lines)
+
+
+def _structured_metadata(row: pd.Series | dict) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for column in _ordered_columns(row, []):
+        value = _clean_scalar(row.get(column, ""))
+        if not value:
+            continue
+        key = f"col_{_metadata_key(column)}"
+        if len(key) > 64:
+            key = key[:64]
+        metadata[key] = value[:1000]
+
+    duration_col = _first_present(row, ["duration", "Duration", "runtime", "Runtime"])
+    if duration_col:
+        minutes = _duration_minutes(row.get(duration_col))
+        if minutes is not None:
+            metadata["duration_minutes"] = minutes
+    return metadata
+
+
+def _ordered_columns(row: pd.Series | dict, preferred: list[str | None]) -> list[str]:
+    columns = [str(column) for column in row.keys()]
+    by_normalized = {_metadata_key(column): column for column in columns}
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for column in preferred:
+        if not column:
+            continue
+        actual = by_normalized.get(_metadata_key(column))
+        if actual and actual not in seen:
+            ordered.append(actual)
+            seen.add(actual)
+    for column in columns:
+        if column not in seen and not str(column).endswith(("__word_count", "__sentiment_score", "__sentiment_label")):
+            ordered.append(column)
+            seen.add(column)
+    return ordered
+
+
+def _humanize_column(column: str) -> str:
+    return str(column).replace("_", " ").strip().title()
+
+
+def _metadata_key(column: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(column).strip().lower()).strip("_")
+
+
+def _duration_minutes(value: Any) -> int | None:
+    text = _clean_scalar(value).lower()
+    match = re.search(r"\b(\d+)\s*min", text)
+    if not match:
+        return None
+    return int(match.group(1))
 
 
 def mark_embedding_completed(
