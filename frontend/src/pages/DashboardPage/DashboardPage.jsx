@@ -2,17 +2,22 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BarChart3,
+  Calendar,
+  CheckCircle2,
   ChevronDown,
   Database,
   Download,
   FileText,
   Info,
   LayoutDashboard,
+  Lightbulb,
   Loader2,
+  MessageSquare,
   MessageSquareText,
   PieChart,
   Play,
   RefreshCw,
+  Smile,
   Sparkles,
   ThumbsUp,
   TrendingUp,
@@ -35,19 +40,20 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  LabelList,
 } from 'recharts';
+import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
+import { scaleLinear } from 'd3-scale';
 import { analyzeDataset, downloadCleanDataset, getAnalysis, getDatasets } from '../../services/api';
 import './DashboardPage.css';
 
 const CHART_COLORS = [
-  '#4f6ef7',
-  '#34d399',
-  '#fbbf24',
-  '#f87171',
-  '#a855f7',
-  '#38bdf8',
-  '#fb923c',
-  '#f472b6',
+  '#a4161a',
+  '#660708',
+  '#161a1d',
+  '#b1a7a6',
+  '#d3d3d3',
+  '#0b090a',
 ];
 
 const SUPPORTED_CHARTS = new Set(['bar', 'horizontal_bar', 'pie', 'donut', 'line', 'area', 'histogram', 'scatter']);
@@ -189,20 +195,23 @@ export default function DashboardPage() {
     <main className="dashboard-page">
       <header className="dashboard-header">
         <div>
-          <h1>
-            <LayoutDashboard size={24} />
-            Dashboard
-          </h1>
-          <p>{selectedDataset?.original_filename || 'Select a dataset to view analytics.'}</p>
+          <h1>Dashboard</h1>
+          <p>{selectedDataset?.original_filename ? 'Overview of your dataset analysis' : 'Select a dataset to view analytics.'}</p>
         </div>
+        <button
+          className="btn btn-secondary"
+          type="button"
+          disabled={!selectedId || downloading}
+          onClick={downloadCleanData}
+        >
+          {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+          Download Clean Data
+        </button>
       </header>
 
-      <section className="dashboard-controls card">
+      <section className="dataset-controls-card card">
         <label className="dataset-picker">
-          <span>
-            <Database size={15} />
-            Dataset
-          </span>
+          <span>Dataset</span>
           <div className="dataset-select-wrap">
             <select
               value={selectedId}
@@ -228,18 +237,8 @@ export default function DashboardPage() {
         </label>
 
         <button className="btn btn-primary" type="button" disabled={!selectedId || analyzing} onClick={runAnalysis}>
-          {analyzing ? <Loader2 size={16} className="animate-spin" /> : analysis ? <RefreshCw size={16} /> : <Play size={16} />}
+          {analyzing ? <Loader2 size={16} className="animate-spin" /> : analysis ? <RefreshCw size={16} /> : null}
           {analysis ? 'Re-analyze' : 'Analyze'}
-        </button>
-
-        <button
-          className="btn btn-secondary"
-          type="button"
-          disabled={!selectedId || downloading}
-          onClick={downloadCleanData}
-        >
-          {downloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-          Download Clean Data
         </button>
       </section>
 
@@ -342,20 +341,16 @@ function CleaningSummary({ report }) {
 
   return (
     <div className="cleaning-summary card">
-      <div>
-        <span>Cleaning status</span>
-        <strong>{status}</strong>
-      </div>
-      <div>
+      <div className="cleaning-table-header">
+        <span>Status</span>
         <span>Rows</span>
-        <strong>{rowsBefore.toLocaleString()} to {rowsAfter.toLocaleString()}</strong>
-      </div>
-      <div>
         <span>Removed</span>
-        <strong>{duplicates.toLocaleString()} duplicates, {nulls.toLocaleString()} null rows</strong>
+        <span>Columns Processed</span>
       </div>
-      <div>
-        <span>Columns processed</span>
+      <div className="cleaning-table-row">
+        <div className="status-badge"><CheckCircle2 size={14}/> {status}</div>
+        <strong>{rowsBefore.toLocaleString()} to {rowsAfter.toLocaleString()}</strong>
+        <strong>{duplicates.toLocaleString()} duplicates, {nulls.toLocaleString()} null rows</strong>
         <strong>{columns.length ? columns.map(formatColumn).join(', ') : 'N/A'}</strong>
       </div>
     </div>
@@ -384,20 +379,25 @@ function StatsStrip({ analysis, chartCount }) {
 
   return (
     <section className="dashboard-stats">
-      <StatTile label="Rows" value={(stats.total_rows_original || 0).toLocaleString()} hint="Uploaded records" />
-      <StatTile label="Analyzed" value={(stats.total_rows_analyzed || 0).toLocaleString()} hint={stats.sampled ? 'Sampled for speed' : 'Full dataset'} />
-      <StatTile label="Insights" value={chartCount.toLocaleString()} hint="Curated visuals" />
-      <StatTile label="Primary Text" value={formatColumn(primaryText) || 'N/A'} hint="Used for sentiment" />
+      <StatTile icon={Database} colorType="accent" label="Rows" value={(stats.total_rows_original || 0).toLocaleString()} hint="Uploaded records" />
+      <StatTile icon={CheckCircle2} colorType="success" label="Analyzed" value={(stats.total_rows_analyzed || 0).toLocaleString()} hint={stats.sampled ? 'Sampled for speed' : 'Full dataset'} />
+      <StatTile icon={Lightbulb} colorType="info" label="Insights" value={chartCount.toLocaleString()} hint="Curated visuals" />
+      <StatTile icon={FileText} colorType="primary" label="Primary Text" value={formatColumn(primaryText) || 'N/A'} hint="Used for sentiment" />
     </section>
   );
 }
 
-function StatTile({ label, value, hint }) {
+function StatTile({ icon: Icon, colorType, label, value, hint }) {
   return (
     <div className="stat-tile card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {hint && <em>{hint}</em>}
+      <div className={`stat-icon-wrapper stat-icon-wrapper--${colorType}`}>
+        <Icon size={20} />
+      </div>
+      <div className="stat-content">
+        <span>{label}</span>
+        <strong>{value}</strong>
+        {hint && <em>{hint}</em>}
+      </div>
     </div>
   );
 }
@@ -407,15 +407,25 @@ function KeyInsights({ insights }) {
     return null;
   }
 
+  const icons = [FileText, CheckCircle2, Smile, MessageSquare, Calendar];
+  const colorTypes = ['primary', 'success', 'warning', 'info', 'accent'];
+
   return (
     <div className="key-insights">
-      {insights.map((insight) => (
-        <article className="insight-card card" key={`${insight.label}-${insight.value}`}>
-          <span>{insight.label}</span>
-          <strong>{insight.value}</strong>
-          {insight.detail && <p>{insight.detail}</p>}
-        </article>
-      ))}
+      {insights.map((insight, index) => {
+        const Icon = icons[index % icons.length];
+        const colorType = colorTypes[index % colorTypes.length];
+        return (
+          <article className="insight-card card" key={`${insight.label}-${insight.value}`}>
+            <span className="insight-label-top">{insight.label}</span>
+            <div className={`insight-icon-center insight-icon-center--${colorType}`}>
+              <Icon size={28} />
+            </div>
+            <strong>{insight.value}</strong>
+            {insight.detail && <p>{insight.detail}</p>}
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -441,9 +451,15 @@ function DynamicChart({ chart }) {
 
   switch (chart.type) {
     case 'bar':
-      return <BarChartView chart={chart} data={data} />;
     case 'horizontal_bar':
-      return <HorizontalBarChartView chart={chart} data={data} />;
+      if (chart.title?.toLowerCase().includes('location') || chart.subtitle?.toLowerCase().includes('country')) {
+        return <WorldMapView chart={chart} data={data} />;
+      }
+      return chart.type === 'bar' ? (
+        <BarChartView chart={chart} data={data} />
+      ) : (
+        <HorizontalBarChartView chart={chart} data={data} />
+      );
     case 'histogram':
       return <HistogramView chart={chart} data={data} />;
     case 'line':
@@ -470,7 +486,7 @@ function BarChartView({ chart, data }) {
         <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(79,110,247,0.08)' }} />
         <Bar dataKey="value" radius={[5, 5, 0, 0]}>
           {data.map((entry, index) => (
-            <Cell key={entry.label} fill={entry.color || chart.colors?.[index] || CHART_COLORS[index % CHART_COLORS.length]} />
+            <Cell key={entry.label} fill={entry.color || CHART_COLORS[index % CHART_COLORS.length]} />
           ))}
         </Bar>
       </BarChart>
@@ -482,12 +498,17 @@ function HorizontalBarChartView({ chart, data }) {
   const visibleData = data.slice(0, 12);
   return (
     <ChartFrame>
-      <BarChart data={visibleData} layout="vertical" margin={{ top: 8, right: 18, bottom: 8, left: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" horizontal={false} />
-        <XAxis type="number" tick={axisTick} />
-        <YAxis type="category" dataKey="label" width={128} tick={compactAxisTick} />
-        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(79,110,247,0.08)' }} />
-        <Bar dataKey="value" fill={chart.color || '#4f6ef7'} radius={[0, 5, 5, 0]} />
+      <BarChart data={visibleData} layout="vertical" margin={{ top: 8, right: 48, bottom: 8, left: 8 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.03)" horizontal={false} />
+        <XAxis type="number" tick={axisTick} hide />
+        <YAxis type="category" dataKey="label" width={128} tick={compactAxisTick} axisLine={false} tickLine={false} />
+        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(164,22,26,0.08)' }} />
+        <Bar dataKey="value" fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} barSize={16}>
+          <LabelList dataKey="value" position="right" fill="var(--color-text-dim)" fontSize={11} formatter={(val) => val.toLocaleString()} />
+          {visibleData.map((entry) => (
+             <Cell key={entry.label} fill={entry.color} />
+          ))}
+        </Bar>
       </BarChart>
     </ChartFrame>
   );
@@ -500,8 +521,8 @@ function HistogramView({ chart, data }) {
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
         <XAxis dataKey="label" angle={-35} textAnchor="end" height={64} tick={smallAxisTick} />
         <YAxis tick={axisTick} />
-        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(168,85,247,0.08)' }} />
-        <Bar dataKey="value" fill={chart.color || '#a855f7'} radius={[5, 5, 0, 0]} />
+        <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(102,7,8,0.08)' }} />
+        <Bar dataKey="value" fill={CHART_COLORS[1]} radius={[5, 5, 0, 0]} />
       </BarChart>
     </ChartFrame>
   );
@@ -518,7 +539,7 @@ function LineChartView({ chart, data }) {
         <Line
           type="monotone"
           dataKey="value"
-          stroke={chart.color || '#4f6ef7'}
+          stroke={CHART_COLORS[0]}
           strokeWidth={2.4}
           dot={{ r: 3 }}
           activeDot={{ r: 5 }}
@@ -539,8 +560,8 @@ function AreaChartView({ chart, data }) {
         <Area
           type="monotone"
           dataKey="value"
-          stroke={chart.color || '#38bdf8'}
-          fill={chart.color || '#38bdf8'}
+          stroke={CHART_COLORS[2]}
+          fill={CHART_COLORS[2]}
           fillOpacity={0.18}
           strokeWidth={2.4}
         />
@@ -557,38 +578,60 @@ function ScatterChartView({ chart, data }) {
         <XAxis type="number" dataKey="x" name={chart.x_label || 'Engagement'} tick={axisTick} />
         <YAxis type="number" dataKey="y" name={chart.y_label || 'Sentiment'} tick={axisTick} domain={[-1, 1]} />
         <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: '3 3' }} />
-        <Scatter data={data} fill={chart.color || '#f472b6'} />
+        <Scatter data={data} fill={CHART_COLORS[3]} />
       </ScatterChart>
     </ChartFrame>
   );
 }
 
 function PieChartView({ chart, data }) {
-  const innerRadius = chart.type === 'donut' ? 58 : 0;
+  const innerRadius = chart.type === 'donut' || true ? 65 : 0;
+  const total = data.reduce((sum, item) => sum + item.value, 0);
 
   return (
-    <ChartFrame>
-      <RechartsPieChart>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="label"
-          cx="50%"
-          cy="48%"
-          innerRadius={innerRadius}
-          outerRadius={96}
-          paddingAngle={2}
-          stroke="rgba(10,12,20,0.65)"
-          strokeWidth={2}
-        >
-          {data.map((entry, index) => (
-            <Cell key={entry.label} fill={entry.color || CHART_COLORS[index % CHART_COLORS.length]} />
-          ))}
-        </Pie>
-        <Tooltip contentStyle={tooltipStyle} />
-        <Legend formatter={(value) => <span className="chart-legend-label">{value}</span>} />
-      </RechartsPieChart>
-    </ChartFrame>
+    <div className="pie-chart-wrapper">
+      <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <RechartsPieChart width={250} height={250}>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="label"
+            cx="50%"
+            cy="50%"
+            innerRadius={innerRadius}
+            outerRadius={96}
+            paddingAngle={2}
+            stroke="var(--color-bg-card)"
+            strokeWidth={3}
+          >
+            {data.map((entry, index) => (
+              <Cell key={`cell-${index}`} fill={entry.color} />
+            ))}
+          </Pie>
+          <Tooltip contentStyle={tooltipStyle} />
+          {innerRadius > 0 && (
+            <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="pie-center-text">
+              <tspan x="50%" dy="-0.2em" className="pie-center-value">{total.toLocaleString()}</tspan>
+              <tspan x="50%" dy="1.4em" className="pie-center-label">Total Analyzed</tspan>
+            </text>
+          )}
+        </RechartsPieChart>
+      </div>
+      <div className="pie-custom-legend">
+        {data.map(item => (
+          <div key={item.label} className="pie-legend-item">
+            <span className="pie-legend-dot" style={{ backgroundColor: item.color }} />
+            <div className="pie-legend-text">
+              <span className="pie-legend-label">{item.label}</span>
+              <strong className="pie-legend-value">{item.value.toLocaleString()}</strong>
+            </div>
+            <span className="pie-legend-pct" style={{ color: item.color, backgroundColor: `${item.color}20` }}>
+              {item.percentage}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -611,40 +654,118 @@ function normalizeScatterData(chart) {
     .filter((item) => Number.isFinite(item.x) && Number.isFinite(item.y));
 }
 
+const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
+
+function WorldMapView({ chart, data }) {
+  const maxValue = Math.max(...data.map((d) => d.value), 1);
+  const colorScale = scaleLinear()
+    .domain([0, maxValue])
+    .range(["#f5f3f4", CHART_COLORS[0]]);
+
+  return (
+    <div className="world-map-wrapper">
+      <div className="world-map-table">
+        {data.slice(0, 5).map((item) => (
+          <div className="world-map-row" key={item.label}>
+            <span className="world-map-color" style={{ backgroundColor: colorScale(item.value) }} />
+            <span className="world-map-label">{item.label}</span>
+            <strong className="world-map-value">{item.value.toLocaleString()}</strong>
+            <span className="world-map-pct">{item.percentage}%</span>
+          </div>
+        ))}
+        {data.length > 5 && (
+          <button className="btn-link">View all locations &rsaquo;</button>
+        )}
+      </div>
+      <div className="world-map-visual">
+        <ComposableMap projectionConfig={{ scale: 140 }} width={400} height={200} style={{ width: "100%", height: "100%" }}>
+          <Geographies geography={geoUrl}>
+            {({ geographies }) =>
+              geographies.map((geo) => {
+                const d = data.find((s) => s.label.toLowerCase() === geo.properties.name.toLowerCase() || s.label === geo.id);
+                return (
+                  <Geography
+                    key={geo.rsmKey}
+                    geography={geo}
+                    fill={d ? colorScale(d.value) : "#f5f3f4"}
+                    stroke="#ffffff"
+                    strokeWidth={0.5}
+                    style={{
+                      default: { outline: "none" },
+                      hover: { fill: "#660708", outline: "none" },
+                      pressed: { outline: "none" },
+                    }}
+                  />
+                );
+              })
+            }
+          </Geographies>
+        </ComposableMap>
+        <div className="world-map-legend">
+          <span>Low</span>
+          <div className="world-map-gradient"></div>
+          <span>High</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function normalizeChartData(chart) {
+  let mappedData = [];
+  
+  const mapSentimentColor = (label) => {
+    const l = String(label).toLowerCase();
+    if (l === 'positive') return CHART_COLORS[3];
+    if (l === 'neutral') return CHART_COLORS[4];
+    if (l === 'negative') return CHART_COLORS[0];
+    return null;
+  };
+
   if (Array.isArray(chart.data) && chart.data.length > 0) {
-    return chart.data
-      .map((item, index) => ({
-        label: String(item.name ?? item.label ?? item.x ?? chart.x?.[index] ?? ''),
-        value: Number(item.value ?? item.y ?? chart.y?.[index] ?? 0),
-        color: item.color,
+    mappedData = chart.data
+      .map((item, index) => {
+        const label = String(item.name ?? item.label ?? item.x ?? chart.x?.[index] ?? '');
+        return {
+          label,
+          value: Number(item.value ?? item.y ?? chart.y?.[index] ?? 0),
+          color: mapSentimentColor(label) || CHART_COLORS[index % CHART_COLORS.length],
+        };
+      })
+      .filter((item) => item.label && Number.isFinite(item.value));
+  } else {
+    const labels = Array.isArray(chart.x) ? chart.x : [];
+    const values = Array.isArray(chart.y) ? chart.y : [];
+
+    mappedData = labels
+      .map((label, index) => ({
+        label: String(label),
+        value: Number(values[index] ?? 0),
+        color: mapSentimentColor(label) || CHART_COLORS[index % CHART_COLORS.length],
       }))
       .filter((item) => item.label && Number.isFinite(item.value));
   }
 
-  const labels = Array.isArray(chart.x) ? chart.x : [];
-  const values = Array.isArray(chart.y) ? chart.y : [];
+  const total = mappedData.reduce((sum, item) => sum + item.value, 0);
+  mappedData = mappedData.map(item => ({
+    ...item,
+    percentage: total > 0 ? ((item.value / total) * 100).toFixed(1) : 0
+  }));
 
-  return labels
-    .map((label, index) => ({
-      label: String(label),
-      value: Number(values[index] ?? 0),
-      color: chart.colors?.[index],
-    }))
-    .filter((item) => item.label && Number.isFinite(item.value));
+  return mappedData;
 }
 
 function formatColumn(value) {
   return value ? String(value).replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()) : '';
 }
 
-const axisTick = { fill: '#8b90a8', fontSize: 11 };
-const smallAxisTick = { fill: '#8b90a8', fontSize: 10 };
-const compactAxisTick = { fill: '#8b90a8', fontSize: 10, width: 120 };
+const axisTick = { fill: '#b1a7a6', fontSize: 11 };
+const smallAxisTick = { fill: '#b1a7a6', fontSize: 10 };
+const compactAxisTick = { fill: '#b1a7a6', fontSize: 10, width: 120 };
 
 const tooltipStyle = {
-  background: '#1a1d2e',
-  border: '1px solid #2a2d3e',
+  background: '#ffffff',
+  border: '1px solid #d3d3d3',
   borderRadius: 8,
-  color: '#e4e6f0',
+  color: '#161a1d',
 };

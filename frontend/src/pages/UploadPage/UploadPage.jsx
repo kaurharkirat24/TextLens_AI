@@ -20,6 +20,7 @@ export default function UploadPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [showIssues, setShowIssues] = useState(true);
+  const [toast, setToast] = useState('');
   const fileInputRef = useRef(null);
 
   const handleDrag = useCallback((e) => {
@@ -51,6 +52,10 @@ export default function UploadPage() {
       localStorage.setItem(LAST_UPLOAD_KEY, JSON.stringify(data));
       if (data.dataset_id) {
         localStorage.setItem(SELECTED_DATASET_KEY, data.dataset_id);
+      }
+      if (data.report?.success) {
+        setToast('Ingestion Successful: ' + (data.report.file_name || ''));
+        setTimeout(() => setToast(''), 3000);
       }
       console.info('[TextLens Upload] Upload completed', {
         dataset_id: data.dataset_id,
@@ -191,13 +196,15 @@ export default function UploadPage() {
       {report && (
         <div className="results animate-fadeInUp">
           {/* Status banner */}
-          <div className={`result-banner ${report.success ? 'result-banner--success' : 'result-banner--error'}`}>
-            {report.success ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
-            <div>
-              <strong>{report.success ? 'Ingestion Successful' : 'Ingestion Failed'}</strong>
-              <span className="result-banner-file">{report.file_name}</span>
+          {!report.success && (
+            <div className="result-banner result-banner--error">
+              <XCircle size={20} />
+              <div>
+                <strong>Ingestion Failed</strong>
+                <span className="result-banner-file">{report.file_name}</span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Column Detection */}
           {report.text_column && (
@@ -342,6 +349,14 @@ export default function UploadPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Toast ─────────────────────────────────────────────────── */}
+      {toast && (
+        <div className="upload-toast animate-fadeInUp">
+          <CheckCircle2 size={16} />
+          <span>{toast}</span>
         </div>
       )}
     </div>

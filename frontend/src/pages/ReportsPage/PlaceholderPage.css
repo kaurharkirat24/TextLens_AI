@@ -26,8 +26,8 @@
 }
 
 .placeholder-icon--purple {
-  background: rgba(168, 85, 247, 0.12);
-  color: #a855f7;
+  background: rgba(164, 22, 26, 0.12);
+  color: var(--color-accent);
 }
 
 .placeholder-icon--green {
