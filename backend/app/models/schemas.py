@@ -12,7 +12,6 @@ from enum import Enum
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
-from pydantic import BaseModel, Field
 
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
@@ -29,7 +28,6 @@ class DatasetStatus(str, Enum):
     PREPROCESSED = "preprocessed"
     ANALYZED = "analyzed"
     PROCESSING = "processing"
-    PROCESSING = "processing"
     EMBEDDED = "embedded"
     FAILED = "failed"
 
@@ -40,7 +38,6 @@ class ColumnDetectionSchema(BaseModel):
     column_name: str
     method: str
     confidence: str
-    candidates: list[str] = Field(default_factory=list)
     candidates: list[str] = Field(default_factory=list)
     reasoning: str = ""
 
@@ -78,7 +75,6 @@ class IngestionReportSchema(BaseModel):
     text_column: Optional[ColumnDetectionSchema] = None
     stats: Optional[DatasetStatsSchema] = None
     issues: list[ValidationIssueSchema] = Field(default_factory=list)
-    issues: list[ValidationIssueSchema] = Field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -104,22 +100,10 @@ class DatasetMeta(BaseModel):
     embedding_index_name: Optional[str] = None
     embedded_at: Optional[datetime] = None
     embedding_progress: float = 0.0      # 0.0 to 1.0
-    file_path: Optional[str] = ""          # path to the uploaded file
-    clean_csv_path: Optional[str] = ""     # path to the cleaned file
-    report_json_path: Optional[str] = ""   # path to the persisted ingestion report
-    analysis_path: Optional[str] = ""      # path to the analysis results JSON
-    embedding_status: Optional[str] = None
-    embedding_model: Optional[str] = None
-    embedding_dimension: Optional[int] = None
-    embedding_count: int = 0
-    embedding_index_name: Optional[str] = None
-    embedded_at: Optional[datetime] = None
-    embedding_progress: float = 0.0      # 0.0 to 1.0
     error: Optional[str] = None
 
 
 class DatasetListResponse(BaseModel):
-    datasets: list[DatasetMeta] = Field(default_factory=list)
     datasets: list[DatasetMeta] = Field(default_factory=list)
     total: int = 0
 

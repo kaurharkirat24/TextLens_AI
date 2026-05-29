@@ -77,28 +77,35 @@ def _dataset_insights(
     time_roles = column_roles.get("time", {})
     primary_text = primary_text_cols[0] if primary_text_cols else None
 
+    metric_col = _preferred_engagement_metric(engagement_roles, df)
+
     content_col = content_roles.get("title") or content_roles.get("id")
     if content_col in df.columns:
-        counts = df[content_col].astype(str).replace("", "(blank)").value_counts().head(10)
-        if not counts.empty:
-            dataset["top_content_by_comments"] = {
+        if metric_col:
+            temp = pd.DataFrame({"label": df[content_col].astype(str).replace("", "(blank)"), "val": pd.to_numeric(df[metric_col], errors="coerce")}).dropna()
+            grouped = temp.groupby("label")["val"].sum().sort_values(ascending=False).head(10)
+        else:
+            grouped = df[content_col].astype(str).replace("", "(blank)").value_counts().head(10)
+            
+        if not grouped.empty:
+            dataset["top_entities"] = {
                 "content_col": content_col,
+                "metric_col": metric_col or "frequency",
                 "items": [
-                    {"content": str(label), "comments": int(count)}
-                    for label, count in counts.items()
+                    {"label": str(label), "value": int(value)}
+                    for label, value in grouped.items()
                 ],
             }
 
     datetime_col = time_roles.get("primary_datetime")
     if datetime_col in df.columns:
-        comments_over_time = _volume_over_time(df[datetime_col])
-        if comments_over_time:
-            comments_over_time["datetime_col"] = datetime_col
-            dataset["comments_over_time"] = comments_over_time
+        volume_over_time = _volume_over_time(df[datetime_col])
+        if volume_over_time:
+            volume_over_time["datetime_col"] = datetime_col
+            dataset["volume_over_time"] = volume_over_time
 
     distributions: dict[str, Any] = {}
-    for metric in ("likes", "replies"):
-        col = engagement_roles.get(metric)
+    for metric, col in engagement_roles.items():
         if col in df.columns:
             values = pd.to_numeric(df[col], errors="coerce").dropna()
             if not values.empty:
@@ -108,24 +115,28 @@ def _dataset_insights(
                     "histogram": _histogram(values),
                 }
     if distributions:
-        dataset["engagement_distributions"] = distributions
+        dataset["metric_distributions"] = distributions
 
     geo_col = geo_roles.get("primary_geo")
     if geo_col in df.columns:
-        values = df[geo_col].astype(str).str.strip().replace("", "(blank)")
-        counts = values.value_counts().head(10)
-        if not counts.empty and counts.index[0] != "(blank)":
+        if metric_col:
+            temp = pd.DataFrame({"label": df[geo_col].astype(str).str.strip().replace("", "(blank)"), "val": pd.to_numeric(df[metric_col], errors="coerce")}).dropna()
+            grouped = temp.groupby("label")["val"].sum().sort_values(ascending=False).head(10)
+        else:
+            grouped = df[geo_col].astype(str).str.strip().replace("", "(blank)").value_counts().head(10)
+            
+        if not grouped.empty and str(grouped.index[0]) != "(blank)":
             dataset["top_geo"] = {
                 "geo_col": geo_col,
+                "metric_col": metric_col or "frequency",
                 "items": [
-                    {"location": str(label), "comments": int(count)}
-                    for label, count in counts.items()
+                    {"label": str(label), "value": int(value)}
+                    for label, value in grouped.items()
                 ],
             }
 
     if primary_text:
         score_col = f"{primary_text}__sentiment_score"
-        metric_col = _preferred_engagement_metric(engagement_roles, df)
         if score_col in df.columns and metric_col:
             valid = pd.DataFrame(
                 {
@@ -471,17 +482,19 @@ def _key_insights(
             }
         )
 
-    top_content = dataset.get("top_content_by_comments", {}).get("items", [])
+    top_content = dataset.get("top_entities", {}).get("items", [])
+    metric_col = dataset.get("top_entities", {}).get("metric_col", "frequency")
     if top_content:
+        detail_msg = f"{top_content[0]['value']:,} {_prettify(metric_col)} recorded." if metric_col != "frequency" else f"{top_content[0]['value']:,} occurrences recorded."
         insights.append(
             {
-                "label": "Most discussed content",
-                "value": str(top_content[0]["content"]),
-                "detail": f"{top_content[0]['comments']:,} comments in the analyzed dataset.",
+                "label": "Top entity",
+                "value": str(top_content[0]["label"]),
+                "detail": detail_msg,
             }
         )
 
-    time_range = dataset.get("comments_over_time", {}).get("range")
+    time_range = dataset.get("volume_over_time", {}).get("range")
     if time_range:
         insights.append(
             {
@@ -492,12 +505,14 @@ def _key_insights(
         )
 
     top_geo = dataset.get("top_geo", {}).get("items", [])
+    geo_metric = dataset.get("top_geo", {}).get("metric_col", "frequency")
     if top_geo:
+        geo_detail = f"{top_geo[0]['value']:,} {_prettify(geo_metric)} recorded." if geo_metric != "frequency" else f"{top_geo[0]['value']:,} occurrences recorded."
         insights.append(
             {
                 "label": "Top location",
-                "value": str(top_geo[0]["location"]),
-                "detail": f"{top_geo[0]['comments']:,} comments from this segment.",
+                "value": str(top_geo[0]["label"]),
+                "detail": geo_detail,
             }
         )
 

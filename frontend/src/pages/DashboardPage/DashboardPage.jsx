@@ -45,6 +45,7 @@ import {
 import { ComposableMap, Geographies, Geography } from 'react-simple-maps';
 import { scaleLinear } from 'd3-scale';
 import { analyzeDataset, downloadCleanDataset, getAnalysis, getDatasets } from '../../services/api';
+import { alpha2ToNumeric } from '../../countryCodes';
 import './DashboardPage.css';
 
 const CHART_COLORS = [
@@ -140,6 +141,15 @@ export default function DashboardPage() {
       const section = grouped[chart.section] ? chart.section : 'other';
       grouped[section].push(chart);
     });
+
+    grouped.other.sort((a, b) => {
+      const aIsMap = a.section === 'geo' || a.title?.toLowerCase().includes('location');
+      const bIsMap = b.section === 'geo' || b.title?.toLowerCase().includes('location');
+      if (aIsMap && !bIsMap) return 1;
+      if (!aIsMap && bIsMap) return -1;
+      return 0;
+    });
+
     return grouped;
   }, [charts]);
 
@@ -433,8 +443,9 @@ function KeyInsights({ insights }) {
 function ChartCard({ chart }) {
   // Strip out the mention of "grouped by countrycode" if it exists in the subtitle
   const subtitle = chart.subtitle?.replace(/grouped by countrycode/i, '')?.trim();
+  const isFullWidth = chart.section === 'geo';
   return (
-    <article className="chart-card card">
+    <article className={`chart-card card ${isFullWidth ? 'chart-card--full-width' : ''}`}>
       <div className="chart-card-header">
         <h2>{chart.title || 'Untitled chart'}</h2>
         {subtitle && <p>{subtitle}</p>}
@@ -455,7 +466,15 @@ function DynamicChart({ chart }) {
     case 'bar':
     case 'horizontal_bar':
       if (chart.title?.toLowerCase().includes('location') || chart.subtitle?.toLowerCase().includes('country')) {
-        return <WorldMapView chart={chart} data={data} />;
+        const COMMON_COUNTRIES = new Set(['united states', 'united states of america', 'uk', 'united kingdom', 'india', 'canada', 'australia', 'germany', 'france', 'china', 'japan', 'brazil', 'russia', 'mexico', 'spain', 'italy']);
+        const hasKnownCountry = data.some((s) => {
+          const label = String(s.label).toUpperCase();
+          return alpha2ToNumeric[label] || COMMON_COUNTRIES.has(String(s.label).toLowerCase());
+        });
+        
+        if (hasKnownCountry) {
+          return <WorldMapView chart={chart} data={data} />;
+        }
       }
       return chart.type === 'bar' ? (
         <BarChartView chart={chart} data={data} />
@@ -503,7 +522,7 @@ function HorizontalBarChartView({ chart, data }) {
       <BarChart data={visibleData} layout="vertical" margin={{ top: 8, right: 48, bottom: 8, left: 8 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.03)" horizontal={false} />
         <XAxis type="number" tick={axisTick} hide />
-        <YAxis type="category" dataKey="label" width={128} tick={compactAxisTick} axisLine={false} tickLine={false} />
+        <YAxis type="category" dataKey="label" width={128} tick={compactAxisTick} tickFormatter={(val) => typeof val === 'string' && val.length > 20 ? `${val.substring(0, 20)}...` : val} axisLine={false} tickLine={false} />
         <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'rgba(164,22,26,0.08)' }} />
         <Bar dataKey="value" fill={CHART_COLORS[0]} radius={[0, 4, 4, 0]} barSize={16}>
           <LabelList dataKey="value" position="right" fill="var(--color-text-dim)" fontSize={11} formatter={(val) => val.toLocaleString()} />
@@ -659,29 +678,56 @@ function normalizeScatterData(chart) {
 const geoUrl = "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json";
 
 function WorldMapView({ chart, data }) {
+  const [hoveredData, setHoveredData] = useState(null);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const maxValue = Math.max(...data.map((d) => d.value), 1);
   const colorScale = scaleLinear()
     .domain([0, maxValue])
-    .range(["#f5f3f4", CHART_COLORS[0]]);
+    .range(["#ffccd5", "#660708"]);
 
   return (
-    <div className="world-map-wrapper">
-      <div className="world-map-table">
-        {data.slice(0, 5).map((item) => (
-          <div className="world-map-row" key={item.label}>
-            <span className="world-map-color" style={{ backgroundColor: colorScale(item.value) }} />
-            <span className="world-map-label">{item.label}</span>
-            <strong className="world-map-value">{item.value.toLocaleString()}</strong>
-            <span className="world-map-pct">{item.percentage}%</span>
+    <div 
+      className="world-map-wrapper"
+      onMouseMove={(e) => setMousePos({ x: e.clientX, y: e.clientY })}
+    >
+      {hoveredData && (
+        <div 
+          className="world-map-cursor-tooltip" 
+          style={{ left: mousePos.x + 15, top: mousePos.y + 15 }}
+        >
+          <strong>{hoveredData.name}</strong>
+          <div>
+            <span>{hoveredData.value.toLocaleString()}</span>
+            <span>{hoveredData.percentage}%</span>
           </div>
-        ))}
+        </div>
+      )}
+
+      <div className="world-map-table">
+        <div className="world-map-rows">
+          {data.slice(0, 5).map((item) => (
+            <div className="world-map-row" key={item.label}
+                 onMouseEnter={() => setHoveredData({ name: item.label, value: item.value, percentage: item.percentage })}
+                 onMouseLeave={() => setHoveredData(null)}>
+              <span className="world-map-color" style={{ backgroundColor: colorScale(item.value) }} />
+              <span className="world-map-label">{item.label}</span>
+              <strong className="world-map-value">{item.value.toLocaleString()}</strong>
+              <span className="world-map-pct">{item.percentage}%</span>
+            </div>
+          ))}
+        </div>
       </div>
       <div className="world-map-visual">
-        <ComposableMap projectionConfig={{ scale: 140 }} width={400} height={200} style={{ width: "100%", height: "100%" }}>
+        <ComposableMap width={800} height={450} projectionConfig={{ scale: 145, center: [0, 5] }} style={{ width: "100%", height: "auto" }}>
           <Geographies geography={geoUrl}>
             {({ geographies }) =>
               geographies.map((geo) => {
-                const d = data.find((s) => s.label.toLowerCase() === geo.properties.name.toLowerCase() || s.label === geo.id);
+                const d = data.find((s) => {
+                  const sLabel = String(s.label).toUpperCase();
+                  const numericCode = alpha2ToNumeric[sLabel];
+                  if (numericCode && numericCode === geo.id) return true;
+                  return String(s.label).toLowerCase() === String(geo.properties?.name).toLowerCase() || String(s.label) === String(geo.id);
+                });
                 return (
                   <Geography
                     key={geo.rsmKey}
@@ -690,21 +736,20 @@ function WorldMapView({ chart, data }) {
                     stroke="#ffffff"
                     strokeWidth={0.5}
                     style={{
-                      default: { outline: "none" },
-                      hover: { fill: "#660708", outline: "none" },
+                      default: { outline: "none", transition: "all 0.2s ease" },
+                      hover: { fill: d ? "#660708" : "#e0e0e0", outline: "none", cursor: d ? "pointer" : "default" },
                       pressed: { outline: "none" },
                     }}
+                    onMouseEnter={() => {
+                      if (d) setHoveredData({ name: geo.properties.name, value: d.value, percentage: d.percentage });
+                    }}
+                    onMouseLeave={() => setHoveredData(null)}
                   />
                 );
               })
             }
           </Geographies>
         </ComposableMap>
-        <div className="world-map-legend">
-          <span>Low</span>
-          <div className="world-map-gradient"></div>
-          <span>High</span>
-        </div>
       </div>
     </div>
   );
