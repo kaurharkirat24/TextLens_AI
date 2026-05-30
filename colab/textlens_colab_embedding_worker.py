@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import os
 import time
+import subprocess
+import concurrent.futures
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -27,6 +29,9 @@ PROGRESS_EVERY_BATCHES = int(os.environ.get("PROGRESS_EVERY_BATCHES", "2"))
 POST_RETRY_ATTEMPTS = int(os.environ.get("TEXTLENS_POST_RETRY_ATTEMPTS", "5"))
 POST_RETRY_BASE_DELAY_SECONDS = float(os.environ.get("TEXTLENS_POST_RETRY_BASE_DELAY_SECONDS", "2"))
 TRANSIENT_STATUS_CODES = {429, 502, 503, 504}
+
+UPSERT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+pending_futures = []
 
 
 def main() -> None:
@@ -53,8 +58,14 @@ def main() -> None:
         f"start_index={start_index} index={index_name}"
     )
 
+    download_start = time.perf_counter()
     chunks_path = _download_chunks(session, dataset_id, chunk_url)
+    print(f"Download phase took {time.perf_counter() - download_start:.1f} seconds.")
+    
+    model_start = time.perf_counter()
     model = SentenceTransformer(model_name, device="cuda")
+    print(f"Model load phase took {time.perf_counter() - model_start:.1f} seconds.")
+    
     actual_dimension = int(model.get_embedding_dimension())
     if dimension and actual_dimension != dimension:
         raise RuntimeError(f"Model dimension {actual_dimension} does not match backend dimension {dimension}")
@@ -132,22 +143,33 @@ def _validate_config() -> None:
 
 
 def _pinecone_index(index_name: str):
-    from pinecone import Pinecone
+    from pinecone.grpc import PineconeGRPC
 
-    pc = Pinecone(api_key=PINECONE_API_KEY)
-    return pc.index(name=index_name, grpc=True)
+    pc = PineconeGRPC(api_key=PINECONE_API_KEY)
+    return pc.Index(name=index_name)
 
 
 def _download_chunks(session: requests.Session, dataset_id: str, chunk_url: str) -> Path:
     url = chunk_url if chunk_url.startswith("http") else urljoin(f"{BACKEND_URL}/", chunk_url.lstrip("/"))
     target = Path(f"/content/{dataset_id}_chunks.jsonl")
-    with session.get(url, stream=True, timeout=120) as response:
-        response.raise_for_status()
-        with target.open("wb") as handle:
-            for part in response.iter_content(chunk_size=1024 * 1024):
-                if part:
-                    handle.write(part)
-    print(f"Downloaded chunks to {target}")
+    
+    print(f"Downloading chunks from {url}...")
+    cmd = [
+        "curl", "-s", "-S", "-L", "--fail", "--compressed",
+        "--retry", "5",
+        "--retry-delay", "2",
+        "--retry-connrefused",
+        "-H", f"Authorization: Bearer {WORKER_TOKEN}",
+        "-o", str(target),
+        url
+    ]
+    
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print(f"Downloaded chunks to {target}")
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"Download failed. curl error: {exc.stderr}")
+        
     return target
 
 
@@ -193,18 +215,44 @@ def _flush(index, namespace: str, pending_vectors: list[dict], force: bool = Fal
     while len(pending_vectors) >= PINECONE_UPSERT_BATCH_SIZE:
         batch = pending_vectors[:PINECONE_UPSERT_BATCH_SIZE]
         del pending_vectors[:PINECONE_UPSERT_BATCH_SIZE]
-        _upsert(index, namespace, batch)
+        future = UPSERT_EXECUTOR.submit(_upsert, index, namespace, batch)
+        pending_futures.append(future)
+        
     if force and pending_vectors:
         batch = list(pending_vectors)
         pending_vectors.clear()
-        _upsert(index, namespace, batch)
+        future = UPSERT_EXECUTOR.submit(_upsert, index, namespace, batch)
+        pending_futures.append(future)
+        
+    if force:
+        # Wait for all final upserts
+        concurrent.futures.wait(pending_futures)
+        for f in pending_futures:
+            f.result()  # Propagate exceptions
+        pending_futures.clear()
+    else:
+        # Propagate exceptions from completed futures without blocking
+        done = [f for f in pending_futures if f.done()]
+        for f in done:
+            f.result()
+            pending_futures.remove(f)
 
 
 def _upsert(index, namespace: str, vectors: list[dict]) -> None:
-    start = time.perf_counter()
-    index.upsert(vectors=vectors, namespace=namespace)
-    elapsed = time.perf_counter() - start
-    print(f"Upserted vectors={len(vectors)} seconds={elapsed:.2f} vectors_per_sec={len(vectors) / max(elapsed, 0.001):.1f}")
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            start = time.perf_counter()
+            index.upsert(vectors=vectors, namespace=namespace, timeout=60)
+            elapsed = time.perf_counter() - start
+            print(f"Upserted vectors={len(vectors)} seconds={elapsed:.2f} vectors_per_sec={len(vectors) / max(elapsed, 0.001):.1f}")
+            return
+        except Exception as exc:
+            if attempt == max_retries:
+                raise
+            delay = 2 * attempt
+            print(f"Warning: Upsert failed (attempt {attempt}/{max_retries}), retrying in {delay}s: {exc}")
+            time.sleep(delay)
 
 
 def _progress(
