@@ -53,15 +53,15 @@ It combines NLP preprocessing, vector search, and LLM-based reasoning (Gemini) t
 
 ## 🧠 System Architecture
 
-React Frontend
+React Frontend (Vite, Tailwind, Recharts)
 ↓
-FastAPI Backend
+FastAPI Backend (Data Cleaning, Routing, Q&A)
 ↓
-Preprocessing Pipeline
+Remote Colab GPU Worker (SentenceTransformers Embeddings)
 ↓
-Embeddings + Vector DB (ChromaDB)
+Vector DB (Pinecone)
 ↓
-RAG Layer (Gemini API)
+RAG Layer (Gemini API with Retrieval Intelligence)
 ↓
 Insights + Dashboard
 
@@ -87,7 +87,8 @@ Insights + Dashboard
 
 ### Vector Database
 
-- ChromaDB (local, scalable for MVP)
+- Pinecone (cloud-native vector search)
+- gRPC data-plane for high-throughput upserts
 
 ---
 
@@ -121,7 +122,10 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-The backend provides CSV upload, preprocessing, embedding generation, and the RAG endpoints for conversational queries.
+3. Configure Environment Variables
+Copy `.env.example` to `.env` and fill in your Gemini API key, Pinecone credentials, and backend worker token.
+
+The backend provides CSV upload, preprocessing, semantic chunking, and the Retrieval Intelligence Q&A endpoints.
 
 ---
 
@@ -139,22 +143,12 @@ Open the URL printed by Vite to interact with the dashboard and upload flows.
 
 ## 🔄 Data Pipeline Overview
 
-CSV Upload
-↓
-Validation + Column Detection
-↓
-Basic Cleaning (Phase 1)
-↓
-Text Normalization (Phase 2)
-↓
-Language Detection
-↓
-Frequency Mapping (Duplicate Handling)
-↓
-Embeddings + Vector Storage
-↓
-RAG + Insights
-
+1. **CSV Upload** → Validation & Automatic Column Detection
+2. **Analysis Pipeline** → Text Cleaning, Sentiment Enrichment, Frequency Mapping
+3. **Semantic Chunking** → Documents are sliced into JSONL chunks
+4. **Remote GPU Embedding** → A Google Colab worker claims the job, embeds the text using `SentenceTransformers`, and async-upserts to Pinecone.
+5. **Insights** → Dashboard renders dynamic charts based on analysis facts.
+6. **Retrieval Intelligence Q&A** → Gemini answers user queries, intelligently routed between factual RAG, semantic exploration, and dataset-wide aggregation.
 ---
 
 ## 📊 Example Use Cases
@@ -176,12 +170,15 @@ RAG + Insights
 
 ## 🧪 Current Status
 
-- ✅ CSV upload & validation
-- ✅ Dataset quality analysis
-- 🔄 Preprocessing pipeline (in progress)
-- 🔄 Vector DB + embeddings integration
-- 🔄 RAG (Gemini) integration
-- 🔄 Dashboard development
+- ✅ CSV upload, validation, and schema detection
+- ✅ Data cleaning & sentiment enrichment pipeline
+- ✅ Analytics Dashboard with dynamic charts
+- ✅ Semantic Chunking & Remote Colab GPU Embedding Worker
+- ✅ Pinecone Vector DB integration (with gRPC and async batched upserts)
+- ✅ RAG (Gemini) integration
+- ✅ Retrieval Intelligence (Intelligently routing between factual RAG, exploratory semantic search, and dataset aggregation)
+- 🔄 Advanced Insights (Topic clustering, FAQ extraction)
+
 
 ### 🎯 Future Enhancements
 
