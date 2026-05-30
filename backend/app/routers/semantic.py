@@ -255,10 +255,16 @@ async def download_embedding_chunks(dataset_id: str, authorization: str | None =
     except SemanticDatasetError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    return FileResponse(
-        path=chunks_path,
+    from fastapi.responses import StreamingResponse
+    def iterfile():
+        with open(chunks_path, mode="rb") as file_like:
+            while chunk := file_like.read(1024 * 1024):  # 1MB chunks
+                yield chunk
+
+    return StreamingResponse(
+        iterfile(),
         media_type="application/x-ndjson",
-        filename=f"{dataset_id}_chunks.jsonl",
+        headers={"Content-Disposition": f"attachment; filename={dataset_id}_chunks.jsonl"}
     )
 
 

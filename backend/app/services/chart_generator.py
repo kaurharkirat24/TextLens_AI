@@ -49,6 +49,22 @@ def generate_charts(
 
     charts.extend(_dataset_charts(insights.get("dataset", {})))
 
+    numeric_insights = insights.get("numeric", {})
+    for col, item in numeric_insights.items():
+        charts.extend(_numeric_charts(col, item))
+
+    categorical_insights = insights.get("categorical", {})
+    for col, item in categorical_insights.items():
+        charts.extend(_categorical_charts(col, item))
+
+    datetime_insights = insights.get("datetime", {})
+    for col, item in datetime_insights.items():
+        charts.extend(_datetime_charts(col, item))
+
+    combination_insights = insights.get("combinations", {})
+    for key, item in combination_insights.items():
+        charts.extend(_combination_charts(key, item))
+
     column_roles = insights.get("summary", {}).get("column_roles", {})
     primary_text = column_roles.get("primary_text")
     text_insights = insights.get("text", {})
@@ -66,17 +82,25 @@ def generate_charts(
 def _dataset_charts(dataset: dict) -> list[dict]:
     charts: list[dict] = []
 
-    top_content = dataset.get("top_content_by_comments", {})
+    top_content = dataset.get("top_entities", {})
     items = top_content.get("items", [])
     if items:
-        labels = [entry["content"] for entry in items]
-        values = [int(entry["comments"]) for entry in items]
+        labels = [entry["label"] for entry in items]
+        values = [int(entry["value"]) for entry in items]
+        metric = top_content.get("metric_col", "frequency")
+        content_col = top_content.get("content_col", "entity")
+        subtitle = f"Grouped by {_prettify(content_col)}"
+        if metric != "frequency":
+            title = f"Top {_prettify(content_col)} by {_prettify(metric)}"
+        else:
+            title = f"Top {_prettify(content_col)}"
+            
         charts.append(
             _chart(
-                seed="top_content_by_comments",
+                seed=f"top_entities_{content_col}",
                 chart_type="horizontal_bar",
-                title="Top Videos by Comment Count",
-                subtitle=f"Grouped by {_prettify(top_content.get('content_col', 'content'))}",
+                title=title,
+                subtitle=subtitle,
                 x=labels,
                 y=values,
                 data=[
@@ -91,38 +115,40 @@ def _dataset_charts(dataset: dict) -> list[dict]:
     engagement = dataset.get("engagement_vs_sentiment", {})
     points = engagement.get("points", [])
     if points:
+        metric = engagement.get("engagement_col", "metric")
         charts.append(
             _chart(
-                seed="engagement_vs_sentiment",
+                seed=f"metric_vs_sentiment_{metric}",
                 chart_type="scatter",
-                title="Engagement vs Sentiment",
-                subtitle=f"{_prettify(engagement.get('engagement_col', 'engagement'))} compared with sentiment score",
+                title=f"{_prettify(metric)} vs Sentiment",
+                subtitle=f"{_prettify(metric)} compared with sentiment score",
                 x=[point["x"] for point in points],
                 y=[point["y"] for point in points],
                 data=points,
-                x_label=_prettify(engagement.get("engagement_col", "Engagement")),
+                x_label=_prettify(metric),
                 y_label="Sentiment score",
                 color="#f472b6",
                 section="engagement",
             )
         )
 
-    comments_over_time = dataset.get("comments_over_time", {})
-    if comments_over_time.get("values"):
+    volume_over_time = dataset.get("volume_over_time", {})
+    if volume_over_time.get("values"):
+        datetime_col = volume_over_time.get("datetime_col", "time")
         charts.append(
             _chart(
-                seed="comments_over_time",
+                seed=f"volume_over_time_{datetime_col}",
                 chart_type="area",
-                title="Comments Over Time",
-                subtitle=f"Comment volume by {comments_over_time.get('frequency', 'period')}",
-                x=comments_over_time.get("labels", []),
-                y=comments_over_time.get("values", []),
+                title="Volume Over Time",
+                subtitle=f"Data volume by {volume_over_time.get('frequency', 'period')}",
+                x=volume_over_time.get("labels", []),
+                y=volume_over_time.get("values", []),
                 color="#38bdf8",
                 section="time",
             )
         )
 
-    distributions = dataset.get("engagement_distributions", {})
+    distributions = dataset.get("metric_distributions", {})
     for metric, item in distributions.items():
         histogram = item.get("histogram", {})
         if not histogram.get("counts"):
@@ -135,7 +161,7 @@ def _dataset_charts(dataset: dict) -> list[dict]:
                 subtitle=f"Distribution of {_prettify(item.get('column', metric))}",
                 x=histogram.get("labels", []),
                 y=histogram.get("counts", []),
-                color="#34d399" if metric == "likes" else "#fbbf24",
+                color="#34d399",
                 section="engagement",
             )
         )
@@ -143,14 +169,15 @@ def _dataset_charts(dataset: dict) -> list[dict]:
     top_geo = dataset.get("top_geo", {})
     geo_items = top_geo.get("items", [])
     if geo_items:
-        labels = [entry["location"] for entry in geo_items]
-        values = [int(entry["comments"]) for entry in geo_items]
+        labels = [entry["label"] for entry in geo_items]
+        values = [int(entry["value"]) for entry in geo_items]
+        geo_col = top_geo.get("geo_col", "location")
         charts.append(
             _chart(
-                seed="top_geo",
+                seed=f"top_geo_{geo_col}",
                 chart_type="bar",
                 title="Top Locations",
-                subtitle=f"Grouped by {_prettify(top_geo.get('geo_col', 'location'))}",
+                subtitle=f"Grouped by {_prettify(geo_col)}",
                 x=labels,
                 y=values,
                 data=[
