@@ -23,6 +23,7 @@ from app.services.query_router import QueryRouter
 from app.services.rag_service import DatasetRAGPipeline
 from app.services.retrieval_context import RetrievalContext
 from app.services.retrieval_planner import RetrievalPlanner
+from app.services.semantic_cache import SemanticQueryCache
 from app.services.semantic_dataset_service import build_metadata, build_row_text, mark_embedding_started
 from app.services.structured_query_service import StructuredQueryService
 from app.services.vector_store_service import PineconeVectorStore
@@ -346,6 +347,29 @@ def test_structured_query_uses_numeric_metric_for_highest_questions(tmp_path):
     assert response is not None
     assert response.plan["strategy"] == "dataframe_extreme"
     assert "bright night has the highest imdb rating" in response.answer.lower()
+
+
+def test_structured_query_prefers_duration_for_under_minutes_filter(tmp_path):
+    csv_path = tmp_path / "catalog.csv"
+    pd.DataFrame(
+        [
+            {"title": "Short Feature", "type": "Movie", "release_year": 2020, "duration": "88 min", "description": "Quick."},
+            {"title": "Long Feature", "type": "Movie", "release_year": 2021, "duration": "140 min", "description": "Long."},
+        ]
+    ).to_csv(csv_path, index=False)
+    meta = DatasetMeta(
+        id="catalog",
+        original_filename="catalog.csv",
+        uploaded_at=datetime.now(timezone.utc),
+        clean_csv_path=str(csv_path),
+    )
+
+    response = StructuredQueryService().answer(meta, "Find movies under 100 minutes.", top_k=5)
+
+    assert response is not None
+    assert response.plan["filters"][-1]["column"] == "duration"
+    assert "Short Feature" in response.answer
+    assert "Long Feature" not in response.answer
 
 
 def test_top_k_is_capped_at_ten():
@@ -691,6 +715,28 @@ def test_retrieval_planner_routes_aggregation_to_analytics():
     assert plan.use_analytics is True
     assert plan.use_semantic is False
     assert plan.top_k == 5
+
+
+def test_semantic_cache_separates_qa_by_top_k(monkeypatch):
+    monkeypatch.setattr("app.services.semantic_cache.settings.SEMANTIC_CACHE_ENABLED", True)
+    monkeypatch.setattr("app.services.semantic_cache.settings.SEMANTIC_CACHE_SIMILARITY_THRESHOLD", 0.99)
+    cache = SemanticQueryCache()
+    embedding = [1.0, 0.0, 0.0]
+
+    cache.put("dataset", "qa", 3, embedding, {"answer": "small context"})
+
+    assert cache.get("dataset", "qa", 10, embedding) is None
+    assert cache.get("dataset", "qa", 3, embedding) == {"answer": "small context"}
+
+
+def test_self_rag_merge_keeps_analytics_rows():
+    pipeline = DatasetRAGPipeline()
+    refined = [{"id": "semantic_2", "text": "refined"}, {"id": "semantic_1", "text": "duplicate"}]
+    original = [{"id": "semantic_1", "text": "old"}, {"id": "analytics_1", "text": "aggregate"}]
+
+    merged = pipeline._merge_rows(refined, original)
+
+    assert [row["id"] for row in merged] == ["semantic_2", "semantic_1", "analytics_1"]
 
 
 def test_search_contract_requires_dataset_id():

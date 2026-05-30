@@ -36,7 +36,7 @@ class SemanticQueryCache:
         for entry in self._entries:
             if entry.dataset_id != dataset_id or entry.route != route:
                 continue
-            if route == "search" and entry.top_k != top_k:
+            if entry.top_k != top_k:
                 continue
             similarity = _cosine_similarity(entry.embedding, embedding)
             if similarity >= settings.SEMANTIC_CACHE_SIMILARITY_THRESHOLD and similarity > best_similarity:
