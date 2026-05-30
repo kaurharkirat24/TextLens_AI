@@ -365,6 +365,10 @@
   border: 1px solid var(--color-border);
 }
 
+.chart-card--full-width {
+  grid-column: 1 / -1;
+}
+
 .chart-card-header {
   display: grid;
   gap: 2px;
@@ -528,31 +532,38 @@
 /* World Map Styles */
 .world-map-wrapper {
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
+  justify-content: center;
   gap: var(--space-xl);
   height: 100%;
-  padding: var(--space-md);
+  padding: 0;
+  margin-top: -8px;
 }
 
 .world-map-table {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
-  justify-content: flex-start;
-  min-width: 200px;
+  gap: var(--space-xs);
+  min-width: 250px;
+  max-height: 292px;
+  overflow-y: auto;
+  margin-top: 24px;
 }
 
 .world-map-row {
   display: flex;
   align-items: center;
   gap: var(--space-md);
-  padding: var(--space-sm) 0;
-  border-bottom: 1px solid rgba(0,0,0,0.03);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  transition: all 0.2s ease;
+  cursor: default;
 }
 
-.world-map-row:last-child {
-  border-bottom: none;
+.world-map-row:hover {
+  background: rgba(0,0,0,0.02);
+  transform: translateX(4px);
 }
 
 .world-map-color {
@@ -589,26 +600,34 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: center;
 }
 
-.world-map-legend {
+.world-map-cursor-tooltip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  border: 1px solid rgba(0,0,0,0.05);
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+.world-map-cursor-tooltip strong {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.world-map-cursor-tooltip div {
   display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  margin-top: var(--space-sm);
-}
-
-.world-map-legend span {
-  font-size: 0.7rem;
-  font-weight: 700;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--color-text-dim);
-  text-transform: uppercase;
-}
-
-.world-map-gradient {
-  width: 120px;
-  height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(to right, #f5f3f4, #a4161a);
+  font-weight: 500;
 }
