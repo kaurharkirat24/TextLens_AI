@@ -69,7 +69,7 @@ class DatasetRAGPipeline:
         if not cleaned_question:
             raise SemanticDatasetError("Question cannot be empty")
 
-        context = RetrievalContext.load(dataset_id)
+        context = self._load_context(dataset_id)
         routed = self.query_router.route(context, cleaned_question, top_k)
 
         if routed.structured:
@@ -178,6 +178,13 @@ class DatasetRAGPipeline:
         meta, _, _ = load_semantic_dataset(dataset_id)
         self._ensure_ready_for_semantic(meta)
         return meta
+
+    def _load_context(self, dataset_id: str) -> RetrievalContext:
+        try:
+            return RetrievalContext.load(dataset_id)
+        except SemanticDatasetError:
+            meta, _, analysis = load_semantic_dataset(dataset_id)
+            return RetrievalContext(dataset_id=dataset_id, meta=meta, analysis=analysis)
 
     def _ensure_ready_for_semantic(self, meta: DatasetMeta) -> None:
         if meta.embedding_status != "completed":

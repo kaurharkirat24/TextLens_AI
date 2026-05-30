@@ -22,8 +22,17 @@ class RetrievalPlan:
 class RetrievalPlanner:
     """Keep routing choices centralized and easy to tune."""
 
-    def plan(self, intent: QueryIntent, effective_top_k: int, complexity: str = "medium") -> RetrievalPlan:
+    def plan(
+        self,
+        intent: QueryIntent,
+        effective_top_k: int | None = None,
+        complexity: str = "medium",
+        *,
+        requested_top_k: int | None = None,
+    ) -> RetrievalPlan:
         # `effective_top_k` is already adapted and bounded by QueryRouter.
+        if effective_top_k is None:
+            effective_top_k = requested_top_k if requested_top_k is not None else 5
         top_k = max(1, min(effective_top_k, 10))
 
         if intent.intent == "aggregation":
