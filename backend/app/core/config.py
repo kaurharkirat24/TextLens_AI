@@ -102,6 +102,7 @@ class Settings:
     # Structured Storage Paths
     DATA_RAW_DIR: str = _resolve_runtime_dir("DATA_RAW_DIR", _PROJECT_ROOT / "data" / "raw", "data/raw")
     DATA_CLEANED_DIR: str = _resolve_runtime_dir("DATA_CLEANED_DIR", _PROJECT_ROOT / "data" / "cleaned", "data/cleaned")
+    DATA_RECORDS_DIR: str = _resolve_runtime_dir("DATA_RECORDS_DIR", _PROJECT_ROOT / "data" / "records", "data/records")
     DATA_CHUNKS_DIR: str = _resolve_runtime_dir("DATA_CHUNKS_DIR", _PROJECT_ROOT / "data" / "chunks", "data/chunks")
     DATA_EMBEDDINGS_DIR: str = _resolve_runtime_dir(
         "DATA_EMBEDDINGS_DIR", _PROJECT_ROOT / "data" / "embeddings", "data/embeddings"
