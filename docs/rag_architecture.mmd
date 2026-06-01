@@ -1,0 +1,31 @@
+flowchart TD
+    A[CSV Upload] --> B[Ingestion]
+    B --> C[Clean CSV]
+    C --> D[Analysis Pipeline]
+    D --> E[Schema, Roles, Insights]
+    C --> F[Semantic Chunking]
+    E --> F
+    F --> G[SentenceTransformers Embeddings]
+    G --> H[Pinecone Dataset Namespace]
+
+    I[User Question] --> J[Dataset Relevance Guardrail]
+    J -->|Out of Scope| K[Polite Refusal]
+    J -->|In Scope| L[Structured Query Check]
+    L -->|Exact Table Answer| M[Dataframe Answer]
+    L -->|Needs Retrieval| N[Intent + Complexity Router]
+
+    N -->|Aggregation| O[Analytics Context]
+    N -->|Semantic or Hybrid| P[HyDE Optional Expansion]
+    P --> Q[Query Embedding]
+    Q --> R[Semantic Cache]
+    R -->|Hit| S[Cached Result]
+    R -->|Miss| H
+    H --> T[Top-K Relevant Rows]
+
+    O --> U[Grounded Context]
+    T --> U
+    U --> V[Gemini or Ollama QA]
+    V --> W[Confidence Check]
+    W -->|Low + Self-RAG On| X[Rewrite Query + Retrieve More]
+    X --> U
+    W -->|Good Enough| Y[Answer + Supporting Rows]
