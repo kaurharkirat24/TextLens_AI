@@ -145,10 +145,11 @@ Open the URL printed by Vite to interact with the dashboard and upload flows.
 
 1. **CSV Upload** → Validation & Automatic Column Detection
 2. **Analysis Pipeline** → Text Cleaning, Sentiment Enrichment, Frequency Mapping
-3. **Semantic Chunking** → Documents are sliced into JSONL chunks
-4. **Remote GPU Embedding** → A Google Colab worker claims the job, embeds the text using `SentenceTransformers`, and async-upserts to Pinecone.
-5. **Insights** → Dashboard renders dynamic charts based on analysis facts.
-6. **Retrieval Intelligence Q&A** → Gemini answers user queries, intelligently routed between factual RAG, semantic exploration, and dataset-wide aggregation.
+3. **Canonical Records** → Cleaned CSV rows become JSON records with `row_id`, `content_hash`, `quality_score`, `language`, `business_fields`, and generated `retrieval_text`.
+4. **Semantic Chunking** → Retrieval text is sliced into JSONL chunks with filterable vector metadata.
+5. **Remote GPU Embedding** → A Google Colab worker claims the job, embeds the retrieval text using `SentenceTransformers`, and async-upserts to Pinecone.
+6. **Insights** → Dashboard renders dynamic charts based on analysis facts.
+7. **Retrieval Intelligence Q&A** → Gemini answers user queries, intelligently routed between factual RAG, semantic exploration, and dataset-wide aggregation.
 ---
 
 ## 📊 Example Use Cases

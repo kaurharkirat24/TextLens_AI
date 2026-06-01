@@ -3,29 +3,31 @@ flowchart TD
     B --> C[Clean CSV]
     C --> D[Analysis Pipeline]
     D --> E[Schema, Roles, Insights]
-    C --> F[Semantic Chunking]
+    C --> F[Canonical JSON Records]
     E --> F
-    F --> G[SentenceTransformers Embeddings]
-    G --> H[Pinecone Dataset Namespace]
+    F --> G[Retrieval Text Generation]
+    G --> H[Semantic Chunking]
+    H --> I[SentenceTransformers Embeddings]
+    I --> J[Pinecone Dataset Namespace]
 
-    I[User Question] --> J[Dataset Relevance Guardrail]
-    J -->|Out of Scope| K[Polite Refusal]
-    J -->|In Scope| L[Structured Query Check]
-    L -->|Exact Table Answer| M[Dataframe Answer]
-    L -->|Needs Retrieval| N[Intent + Complexity Router]
+    K[User Question] --> L[Dataset Relevance Guardrail]
+    L -->|Out of Scope| M[Polite Refusal]
+    L -->|In Scope| N[Structured Query Check]
+    N -->|Exact Table Answer| O[Dataframe Answer]
+    N -->|Needs Retrieval| P[Intent + Complexity Router]
 
-    N -->|Aggregation| O[Analytics Context]
-    N -->|Semantic or Hybrid| P[HyDE Optional Expansion]
-    P --> Q[Query Embedding]
-    Q --> R[Semantic Cache]
-    R -->|Hit| S[Cached Result]
-    R -->|Miss| H
-    H --> T[Top-K Relevant Rows]
+    P -->|Aggregation| Q[Analytics Context]
+    P -->|Semantic or Hybrid| R[HyDE Optional Expansion]
+    R --> S[Query Embedding]
+    S --> T[Semantic Cache]
+    T -->|Hit| U[Cached Result]
+    T -->|Miss| J
+    J --> V[Top-K Relevant Rows]
 
-    O --> U[Grounded Context]
-    T --> U
-    U --> V[Gemini or Ollama QA]
-    V --> W[Confidence Check]
-    W -->|Low + Self-RAG On| X[Rewrite Query + Retrieve More]
-    X --> U
-    W -->|Good Enough| Y[Answer + Supporting Rows]
+    Q --> W[Grounded Context]
+    V --> W
+    W --> X[Gemini or Ollama QA]
+    X --> Y[Confidence Check]
+    Y -->|Low + Self-RAG On| Z[Rewrite Query + Retrieve More]
+    Z --> W
+    Y -->|Good Enough| AA[Answer + Supporting Rows]
