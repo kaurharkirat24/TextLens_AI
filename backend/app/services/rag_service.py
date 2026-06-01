@@ -69,7 +69,7 @@ class DatasetRAGPipeline:
         if not cleaned_question:
             raise SemanticDatasetError("Question cannot be empty")
 
-        context = RetrievalContext.load(dataset_id)
+        context = self._load_context(dataset_id)
         routed = self.query_router.route(context, cleaned_question, top_k)
 
         if routed.structured:
@@ -116,6 +116,7 @@ class DatasetRAGPipeline:
             )
             semantic_ids = {item.get("id") for item in semantic_rows}
             rows = semantic_rows + [row for row in rows if row.get("id") not in semantic_ids]
+        base_rows = list(rows)
 
         answer = self.qa_service.answer(
             cleaned_question,
@@ -144,9 +145,10 @@ class DatasetRAGPipeline:
             rewritten_query = self.qa_service.rewrite_query(cleaned_question, rows, plan.intent)
             rewritten_queries.append(rewritten_query)
             refined_rows = self.semantic_retriever.search(context.meta, dataset_id, rewritten_query, expanded_top_k)
+            merged_rows = self._merge_rows(refined_rows, base_rows)
             refined_answer = self.qa_service.answer(
                 cleaned_question,
-                refined_rows,
+                merged_rows,
                 intent=plan.intent,
                 strategy=f"{plan.strategy}_self_rag",
                 prompt_style=plan.prompt_style,
@@ -154,7 +156,7 @@ class DatasetRAGPipeline:
             )
             if float(refined_answer.get("confidence") or 0.0) >= float(answer.get("confidence") or 0.0):
                 answer = refined_answer
-                rows = refined_rows
+                rows = merged_rows
             retries_used += 1
 
         if retries_used:
@@ -179,6 +181,13 @@ class DatasetRAGPipeline:
         self._ensure_ready_for_semantic(meta)
         return meta
 
+    def _load_context(self, dataset_id: str) -> RetrievalContext:
+        try:
+            return RetrievalContext.load(dataset_id)
+        except SemanticDatasetError:
+            meta, _, analysis = load_semantic_dataset(dataset_id)
+            return RetrievalContext(dataset_id=dataset_id, meta=meta, analysis=analysis)
+
     def _ensure_ready_for_semantic(self, meta: DatasetMeta) -> None:
         if meta.embedding_status != "completed":
             raise SemanticDatasetError("Embeddings are not completed for this dataset. Run /api/embed first.")
@@ -193,6 +202,10 @@ class DatasetRAGPipeline:
         if not rows:
             return False
         return float(answer.get("confidence") or 0.0) < settings.SELF_RAG_CONFIDENCE_THRESHOLD
+
+    def _merge_rows(self, primary_rows: list[dict[str, Any]], fallback_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        seen = {row.get("id") for row in primary_rows}
+        return primary_rows + [row for row in fallback_rows if row.get("id") not in seen]
 
     def _cache_scope(self, meta: DatasetMeta) -> str:
         embedded_at = meta.embedded_at.isoformat() if meta.embedded_at else ""

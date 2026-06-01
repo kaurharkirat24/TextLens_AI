@@ -114,10 +114,16 @@ def save_clean_dataset(
 
 def load_csv(path: str) -> pd.DataFrame:
     """Load a CSV file with common encoding fallbacks."""
+    csv_path = Path(path)
+    if not csv_path.exists() and not csv_path.is_absolute():
+        repo_path = Path(__file__).resolve().parents[3] / csv_path
+        if repo_path.exists():
+            csv_path = repo_path
+
     for encoding in ("utf-8", "utf-8-sig", "latin-1"):
         try:
             df = pd.read_csv(
-                path,
+                csv_path,
                 encoding=encoding,
                 skip_blank_lines=True,
                 na_values=["", "N/A", "NA", "null", "NULL", "None", "none", "NaN"],

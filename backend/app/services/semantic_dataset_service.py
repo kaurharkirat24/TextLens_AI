@@ -23,6 +23,13 @@ from app.core.config import settings
 from app.models.schemas import DatasetMeta
 from app.services.dataset_manager import get_dataset, update_dataset
 from app.services.embedding_service import get_embedding_service
+from app.services.record_transformer import (
+    CLEANING_VERSION,
+    RECORD_SCHEMA_VERSION,
+    build_vector_metadata,
+    transform_row_to_record,
+)
+from app.services.retrieval_text_builder import RETRIEVAL_TEXT_VERSION
 
 logger = logging.getLogger(__name__)
 SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
@@ -132,6 +139,7 @@ class IngestionPipeline:
         paths = {
             "raw": Path(settings.DATA_RAW_DIR),
             "cleaned": Path(settings.DATA_CLEANED_DIR),
+            "records": Path(settings.DATA_RECORDS_DIR),
             "chunks": Path(settings.DATA_CHUNKS_DIR),
             "embeddings": Path(settings.DATA_EMBEDDINGS_DIR),
             "temp": Path(settings.DATA_TEMP_DIR),
@@ -206,7 +214,7 @@ class IngestionPipeline:
             raise
 
     def _process_chunks(self) -> tuple[Path, Path]:
-        """Stream CSV and split into chunks, saving to Parquet for persistence."""
+        """Stream CSV into canonical records, then retrieval-optimized chunks."""
         start = time.perf_counter()
         chunks_path = self._existing_chunks_path()
         manifest_path = self._manifest_path()
@@ -222,30 +230,46 @@ class IngestionPipeline:
             raise SemanticDatasetError("Clean dataset not found.")
 
         analysis = _load_analysis(self.meta, self.dataset_id)
-        primary_text_col = (analysis.get("column_roles") or {}).get("primary_text") or self.meta.text_column
 
         logger.info("Starting chunking for dataset %s", self.dataset_id)
+        records_path = self.storage["records"] / f"{self.dataset_id}_records.jsonl"
+        temp_records_path = records_path.with_suffix(".jsonl.tmp")
         chunks_path = self.storage["chunks"] / f"{self.dataset_id}_chunks.jsonl"
         temp_chunks_path = chunks_path.with_suffix(".jsonl.tmp")
         chunk_count = 0
+        record_count = 0
         
         chunk_iter = pd.read_csv(self.meta.clean_csv_path, chunksize=settings.CSV_READ_CHUNK_SIZE)
         total_rows_processed = 0
 
-        with open(temp_chunks_path, "w", encoding="utf-8") as handle:
+        with (
+            open(temp_records_path, "w", encoding="utf-8") as records_handle,
+            open(temp_chunks_path, "w", encoding="utf-8") as chunks_handle,
+        ):
             for df_chunk in chunk_iter:
                 records = df_chunk.to_dict("records")
                 for idx, row in zip(df_chunk.index, records):
-                    text = build_row_text(row, analysis, primary_text_col)
-                    if not text:
+                    canonical_record = transform_row_to_record(
+                        row,
+                        dataset_id=self.dataset_id,
+                        row_index=int(idx),
+                        source_file=self.meta.original_filename,
+                        uploaded_at=self.meta.uploaded_at,
+                        analysis=analysis,
+                    )
+                    retrieval_text = canonical_record.get("retrieval_text", "")
+                    if not retrieval_text:
                         continue
 
-                    sentence_chunks = self.splitter.split(text)
+                    records_handle.write(json.dumps(canonical_record, ensure_ascii=False) + "\n")
+                    record_count += 1
+
+                    sentence_chunks = self.splitter.split(retrieval_text)
                     for chunk_id, chunk_text in enumerate(sentence_chunks):
-                        meta = build_metadata(self.dataset_id, idx, chunk_text, row, analysis)
+                        meta = build_vector_metadata(canonical_record, chunk_text)
                         meta["chunk_id"] = chunk_id
                         record = {"text": chunk_text, "metadata": json.dumps(meta)}
-                        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                        chunks_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
                         chunk_count += 1
 
                 total_rows_processed += len(df_chunk)
@@ -253,16 +277,19 @@ class IngestionPipeline:
 
         if chunk_count == 0:
             temp_chunks_path.unlink(missing_ok=True)
+            temp_records_path.unlink(missing_ok=True)
             raise SemanticDatasetError("Clean dataset has no text chunks suitable for embedding.")
 
+        temp_records_path.replace(records_path)
         temp_chunks_path.replace(chunks_path)
         self._write_manifest(manifest_path)
-        logger.info("Saved %s chunks to %s", chunk_count, chunks_path)
+        logger.info("Saved %s records to %s and %s chunks to %s", record_count, records_path, chunk_count, chunks_path)
         elapsed = time.perf_counter() - start
         logger.info(
-            "Chunking completed for %s: rows_processed=%s chunks=%s elapsed_seconds=%.1f rows_per_sec=%.1f chunks_per_sec=%.1f",
+            "Chunking completed for %s: rows_processed=%s records=%s chunks=%s elapsed_seconds=%.1f rows_per_sec=%.1f chunks_per_sec=%.1f",
             self.dataset_id,
             total_rows_processed,
+            record_count,
             chunk_count,
             elapsed,
             total_rows_processed / max(elapsed, 0.001),
@@ -703,7 +730,10 @@ class IngestionPipeline:
             "chunk_overlap_sentences": settings.CHUNK_OVERLAP_SENTENCES,
             "min_chunk_words": settings.MIN_CHUNK_WORDS,
             "max_chunk_words": settings.MAX_CHUNK_WORDS,
-            "chunk_format": "structured_row_v2",
+            "cleaning_version": CLEANING_VERSION,
+            "record_schema_version": RECORD_SCHEMA_VERSION,
+            "retrieval_text_version": RETRIEVAL_TEXT_VERSION,
+            "chunk_format": "canonical_record_v1",
         }
 
     def _manifest_matches(self, manifest_path: Path) -> bool:
@@ -720,7 +750,7 @@ class IngestionPipeline:
             json.dump(self._artifact_signature(), handle, indent=2)
 
     def _delete_stale_artifacts(self) -> None:
-        for directory in ("chunks", "embeddings", "temp"):
+        for directory in ("records", "chunks", "embeddings", "temp"):
             for file in self.storage[directory].glob(f"{self.dataset_id}_*"):
                 try:
                     file.unlink()

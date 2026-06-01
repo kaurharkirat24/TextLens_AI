@@ -469,6 +469,7 @@ def _filter_mask(
             mask = mask & value_mask
             filters.append({"column": column, "operator": "=", "value": _first_display_value(df, column, matched)})
 
+    comparison_candidates: list[tuple[int, str, pd.Series, tuple[str, float]]] = []
     for column in df.columns:
         if column in exclude:
             continue
@@ -478,6 +479,9 @@ def _filter_mask(
         comparison = _comparison_from_question(normalized_question, column)
         if not comparison:
             continue
+        comparison_candidates.append((_comparison_column_score(column, series, normalized_question), column, series, comparison))
+
+    for _, column, series, comparison in sorted(comparison_candidates, reverse=True):
         operator, limit = comparison
         value_mask = _compare(series, operator, limit)
         if value_mask.notna().any():
@@ -575,6 +579,20 @@ def _comparison_from_question(normalized_question: str, column: str) -> tuple[st
     raw_operator, raw_value = match.groups()
     operator = "<" if raw_operator in {"under", "less than", "below", "shorter than", "before"} else ">"
     return operator, float(raw_value)
+
+
+def _comparison_column_score(column: str, series: pd.Series, normalized_question: str) -> int:
+    terms = set(_tokens(normalized_question))
+    label_terms = set(_tokens(_display_label(column)))
+    score = len(terms.intersection(label_terms)) * 10
+    unit = str(series.attrs.get("unit") or "")
+    if unit == "minutes" and terms.intersection({"duration", "runtime", "minute", "minutes", "mins"}):
+        score += 30
+    if unit == "seasons" and terms.intersection({"season", "seasons"}):
+        score += 30
+    if unit:
+        score += 5
+    return score
 
 
 def _compare(series: pd.Series, operator: str, value: float) -> pd.Series:

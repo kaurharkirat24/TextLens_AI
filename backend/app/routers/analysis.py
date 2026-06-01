@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.services.dataset_manager import get_dataset, update_dataset
-from app.services.analysis_pipeline import load_csv, run_analysis, save_analysis_results
+from app.services.pipeline import load_csv, run_analysis, save_analysis_results
 from app.services.dataset_profile_service import DatasetProfileService
 
 router = APIRouter(prefix="/api", tags=["analysis"])
